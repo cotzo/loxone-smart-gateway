@@ -12,6 +12,8 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
     public async Task<IActionResult> SetLights(string id, [FromBody] int value, [FromQuery] string ip, [FromQuery] string accessKey,
         [FromQuery] PhilipsHueLightType lightType, [FromQuery]string resourceType, [FromQuery] int transitionTime)
     {
+        _logger.LogInformation($"New Request::: id: {id}, value: {value}, ip: {ip}, accessKey: {accessKey}, lightType: {lightType}, resourceType: {resourceType}, transitionTime: {transitionTime}  ");
+        
         string commandBody = string.Empty;
 
         switch (lightType)
@@ -39,6 +41,8 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         if (string.IsNullOrEmpty(commandBody))
             return BadRequest("No command created");
 
+        _logger.LogInformation($"Body: {commandBody}");
+        
         using var handler = new HttpClientHandlerInsecure();
         using HttpClient client = new HttpClient(handler);
         client.DefaultRequestHeaders.Add("hue-application-key", accessKey);
@@ -91,7 +95,7 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         }
     }
 
-    private static string GetRgbCommand(int value, int transitionTime)
+    private string GetRgbCommand(int value, int transitionTime)
     {
         // Check if brightness is set to 0 and leave early
         if (0 == value)
@@ -103,6 +107,8 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         var green = (value - (blue * 1000000)) / 1000;
         var red = value - (blue * 1000000) - (green * 1000);
 
+        _logger.LogInformation($"RGB Identified: r: {red}, g: {green}, b: {blue}");
+        
         double cx;
         double cy;
 
