@@ -1,4 +1,4 @@
-namespace loxone.smart.gateway.Apis;
+namespace loxone.smart.gateway;
 
 public class HttpClientHandlerInsecure : HttpClientHandler
 {
