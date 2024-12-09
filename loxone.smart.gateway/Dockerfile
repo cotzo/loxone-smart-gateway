@@ -11,13 +11,13 @@ COPY ["loxone.smart.gateway.csproj", "./"]
 RUN dotnet restore "loxone.smart.gateway.csproj"
 COPY . .
 WORKDIR "/src/"
-RUN dotnet build "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -o /app/build
+RUN dotnet build "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -o /app/build2
 
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -o /app/publish2 /p:UseAppHost=false
 
 FROM base AS final
 WORKDIR /app
-COPY --from=publish /app/publish .
+COPY --from=publish /app/publish2 .
 ENTRYPOINT ["dotnet", "loxone.smart.gateway.dll"]
