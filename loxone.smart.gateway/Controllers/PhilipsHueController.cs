@@ -103,11 +103,15 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
             return GetOnOffCommand(value, transitionTime);
         }
 
-        double blue = value / 1000000;
-        var green = (value - (blue * 1000000)) / 1000;
-        var red = value - (blue * 1000000) - (green * 1000);
+        int blueInput = value / 1000000;
+        int greenInput = (value - (blueInput * 1000000)) / 1000;
+        int redInput = value - (blueInput * 1000000) - (greenInput * 1000);
 
-        _logger.LogInformation($"RGB Identified: r: {red}, g: {green}, b: {blue}");
+        _logger.LogInformation($"RGB Identified: r: {redInput}, g: {greenInput}, b: {blueInput}");
+
+        double blue = blueInput;
+        double green = greenInput;
+        double red = redInput;
         
         double cx;
         double cy;
@@ -174,7 +178,7 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         }
 
         return
-            $"{{\"color\": {{\"xy\": {{\"x\": {cx}, \"y\": {cy}}}}}, \"dimming\": {{\"brightness\": {bri}}}, \"on\": {{\"on\": true}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
+            $"{{\"color\": {{\"xy\": {{\"x\": {cx:F4}, \"y\": {cy:F4}}}}}, \"dimming\": {{\"brightness\": {bri}}}, \"on\": {{\"on\": true}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
     }
 }
 
