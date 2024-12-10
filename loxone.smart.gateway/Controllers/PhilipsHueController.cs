@@ -7,11 +7,13 @@ namespace loxone.smart.gateway.Controllers;
 public class PhilipsHueController(ILogger<PhilipsHueController> logger) : ControllerBase
 {
     [HttpPost("{id}")]
-    public async Task<IActionResult> SetLights(string id, [FromBody] int value, [FromQuery] string ip, [FromQuery] string accessKey,
-        [FromQuery] PhilipsHueLightType lightType, [FromQuery]string resourceType, [FromQuery] int transitionTime)
+    public async Task<IActionResult> SetLights(string id, [FromBody] int value, [FromQuery] string ip,
+        [FromQuery] string accessKey,
+        [FromQuery] PhilipsHueLightType lightType, [FromQuery] string resourceType, [FromQuery] int transitionTime)
     {
-        logger.LogInformation($"New Request::: id: {id}, value: {value}, ip: {ip}, accessKey: {accessKey}, lightType: {lightType}, resourceType: {resourceType}, transitionTime: {transitionTime}  ");
-        
+        logger.LogInformation(
+            $"New Request::: id: {id}, value: {value}, ip: {ip}, accessKey: {accessKey}, lightType: {lightType}, resourceType: {resourceType}, transitionTime: {transitionTime}  ");
+
         string commandBody = string.Empty;
 
         switch (lightType)
@@ -37,16 +39,22 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         }
 
         if (string.IsNullOrEmpty(commandBody))
+        {
+            logger.LogError(
+                $"Invalid Request::: id: {id}, value: {value}, ip: {ip}, resourceType: {resourceType}, accessKey: {accessKey}, lightType: {lightType}");
             return BadRequest("No command created");
+        }
+
 
         logger.LogInformation($"Body: {commandBody}");
-        
+
         using var handler = new HttpClientHandlerInsecure();
         using HttpClient client = new HttpClient(handler);
         client.DefaultRequestHeaders.Add("hue-application-key", accessKey);
-        await client.PutAsync($"https://{ip}/clip/v2/resource/{resourceType}/{id}",
+        HttpResponseMessage response = await client.PutAsync($"https://{ip}/clip/v2/resource/{resourceType}/{id}",
             new StringContent(commandBody));
 
+        logger.LogInformation($"Response status code: {response.StatusCode}. Body: {await response.Content.ReadAsStringAsync()}");
         return Ok();
     }
 
