@@ -59,7 +59,8 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         HttpResponseMessage response = await client.PutAsync($"https://{ip}/clip/v2/resource/{resourceType}/{id}",
             new StringContent(commandBody));
 
-        logger.LogInformation($"Response status code: {response.StatusCode}. Body: {await response.Content.ReadAsStringAsync()}");
+        if (!response.IsSuccessStatusCode)
+            logger.LogError($"Response status code: {response.StatusCode}. Body: {await response.Content.ReadAsStringAsync()}");
         return Ok();
     }
 
