@@ -19,16 +19,15 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         switch (lightType)
         {
             case PhilipsHueLightType.RGB:
-                commandBody = value < 200000000
-                    ? GetRgbCommand(value, transitionTime)
-                    : GetTunableCommand(value, transitionTime);
-                break;
             case PhilipsHueLightType.TUNABLE:
-                if (value is >= 200000000 or 0)
+                if (value == 0)
+                    commandBody = GetOnOffCommand(value, transitionTime);
+                else
                 {
-                    commandBody = GetTunableCommand(value, transitionTime);
+                    commandBody = value < 200000000
+                        ? GetRgbCommand(value, transitionTime)
+                        : GetTunableCommand(value, transitionTime);
                 }
-
                 break;
             case PhilipsHueLightType.DIM:
                 commandBody = GetDimCommand(value, transitionTime);
