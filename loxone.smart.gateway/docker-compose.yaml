@@ -1,0 +1,7 @@
+version: '3'
+services:
+  loxone-smart-gateway:
+    image: ghcr.io/cotzo/loxone-smart-gateway:main
+    restart: always
+    ports:
+      - 8080:8080
