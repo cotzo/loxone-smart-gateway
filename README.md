@@ -2,6 +2,8 @@
 
 Loxone Smart Gateway is a self-hosted local API with the purpose to bridge the gap between Loxone Ecosystem and 3rd party smart home providers. This bridge solves many limitations of the Loxone ecosystem like Custom Programming (PicoC) which does not support https requests, are limited in number of instances etc.
 
+Please not that this bridge does not store any information and does not pass it externally.
+
 ## Plugins
 
 ### 1. Philips Hue
