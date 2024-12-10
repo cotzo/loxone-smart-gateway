@@ -19,15 +19,21 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         switch (lightType)
         {
             case PhilipsHueLightType.RGB:
+                commandBody = value < 200000000
+                    ? GetRgbCommand(value, transitionTime)
+                    : GetTunableCommand(value, transitionTime);
+                break;
             case PhilipsHueLightType.TUNABLE:
-                if (value == 0)
-                    commandBody = GetOnOffCommand(value, transitionTime);
-                else
+                // hack because on Loxone Lighting Controller All On, he is sending RGB 50% brightness even for non RGB lighting
+                if (value == 50050050)
                 {
-                    commandBody = value < 200000000
-                        ? GetRgbCommand(value, transitionTime)
-                        : GetTunableCommand(value, transitionTime);
+                    value = 200504586;
                 }
+                if (value is >= 200000000 or 0)
+                {
+                    commandBody = GetTunableCommand(value, transitionTime);
+                }
+
                 break;
             case PhilipsHueLightType.DIM:
                 commandBody = GetDimCommand(value, transitionTime);
