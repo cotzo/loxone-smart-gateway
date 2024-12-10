@@ -84,13 +84,16 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
 
     private static string GetTunableCommand(int value, int transitionTime)
     {
+        if (value == 0)
+            return GetOnOffCommand(0, transitionTime);
+        
         var brightness = (value - 200000000) / 10000; // 0-100
         var temperature = (value - 200000000) - (brightness * 10000); // Kelvin 2700 - 6500
 
         temperature = 1000000 / temperature; // 154 - 370
 
         // Check if input value was set to 0 or brightness is set to 0
-        if ((0 == value) || (0 == brightness))
+        if (0 == brightness)
         {
             return GetOnOffCommand(0, transitionTime);
         }
