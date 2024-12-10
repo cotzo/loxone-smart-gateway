@@ -12,7 +12,7 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         [FromQuery] PhilipsHueLightType lightType, [FromQuery] string resourceType, [FromQuery] int transitionTime)
     {
         logger.LogInformation(
-            $"New Request::: id: {id}, value: {value}, ip: {ip}, accessKey: {accessKey}, lightType: {lightType}, resourceType: {resourceType}, transitionTime: {transitionTime}  ");
+            $"New Request::: id: {id}, value: {value}, lightType: {lightType}, resourceType: {resourceType}  ");
 
         string commandBody = string.Empty;
 
@@ -41,7 +41,7 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         if (string.IsNullOrEmpty(commandBody))
         {
             logger.LogError(
-                $"Invalid Request::: id: {id}, value: {value}, ip: {ip}, resourceType: {resourceType}, accessKey: {accessKey}, lightType: {lightType}");
+                $"Invalid Request::: id: {id}, value: {value}, resourceType: {resourceType}, lightType: {lightType}");
             return BadRequest("No command created");
         }
 
@@ -112,8 +112,6 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         int blueInput = value / 1000000;
         int greenInput = (value - (blueInput * 1000000)) / 1000;
         int redInput = value - (blueInput * 1000000) - (greenInput * 1000);
-
-        logger.LogInformation($"RGB Identified: r: {redInput}, g: {greenInput}, b: {blueInput}");
 
         double blue = blueInput;
         double green = greenInput;
