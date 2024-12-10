@@ -6,13 +6,11 @@ namespace loxone.smart.gateway.Controllers;
 [Route("[controller]")]
 public class PhilipsHueController(ILogger<PhilipsHueController> logger) : ControllerBase
 {
-    private readonly ILogger<PhilipsHueController> _logger = logger;
-
     [HttpPost("{id}")]
     public async Task<IActionResult> SetLights(string id, [FromBody] int value, [FromQuery] string ip, [FromQuery] string accessKey,
         [FromQuery] PhilipsHueLightType lightType, [FromQuery]string resourceType, [FromQuery] int transitionTime)
     {
-        _logger.LogInformation($"New Request::: id: {id}, value: {value}, ip: {ip}, accessKey: {accessKey}, lightType: {lightType}, resourceType: {resourceType}, transitionTime: {transitionTime}  ");
+        logger.LogInformation($"New Request::: id: {id}, value: {value}, ip: {ip}, accessKey: {accessKey}, lightType: {lightType}, resourceType: {resourceType}, transitionTime: {transitionTime}  ");
         
         string commandBody = string.Empty;
 
@@ -41,7 +39,7 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         if (string.IsNullOrEmpty(commandBody))
             return BadRequest("No command created");
 
-        _logger.LogInformation($"Body: {commandBody}");
+        logger.LogInformation($"Body: {commandBody}");
         
         using var handler = new HttpClientHandlerInsecure();
         using HttpClient client = new HttpClient(handler);
@@ -107,7 +105,7 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger) : Contro
         int greenInput = (value - (blueInput * 1000000)) / 1000;
         int redInput = value - (blueInput * 1000000) - (greenInput * 1000);
 
-        _logger.LogInformation($"RGB Identified: r: {redInput}, g: {greenInput}, b: {blueInput}");
+        logger.LogInformation($"RGB Identified: r: {redInput}, g: {greenInput}, b: {blueInput}");
 
         double blue = blueInput;
         double green = greenInput;
