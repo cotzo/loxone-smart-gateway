@@ -6,11 +6,11 @@ EXPOSE 8081
 
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG BUILD_CONFIGURATION=Release
-WORKDIR /loxone.smart.gateway
+WORKDIR /src
 COPY ["loxone.smart.gateway.csproj", "./"]
 RUN dotnet restore "loxone.smart.gateway.csproj"
 COPY . .
-WORKDIR "/loxone.smart.gateway/"
+WORKDIR "/src/"
 RUN dotnet build "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -o /app/build
 
 FROM build AS publish
