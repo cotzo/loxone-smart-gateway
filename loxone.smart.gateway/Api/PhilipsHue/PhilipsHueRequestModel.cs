@@ -11,12 +11,6 @@ public class PhilipsHueRequestModel
     public int Value { get; set; }
     
     [FromQuery]
-    public string Ip { get; set; }
-    
-    [FromQuery]
-    public string AccessKey { get; set; }
-    
-    [FromQuery]
     public PhilipsHueLightType LightType { get; set; }
     
     [FromQuery]

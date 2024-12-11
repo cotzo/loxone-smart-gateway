@@ -2,13 +2,40 @@ using System.Collections.Concurrent;
 
 namespace loxone.smart.gateway.Api.PhilipsHue;
 
-public class PhilipsHueMessageSender(ILogger<PhilipsHueMessageSender> logger)
+public class PhilipsHueMessageSender
     : BackgroundService
 {
+    private readonly ILogger<PhilipsHueMessageSender> _logger;
     private readonly ConcurrentQueue<PhilipsHueRequestModel> _requestModels = new();
+    private readonly PhilipsHueConfiguration _configuration = new();
+
+    public PhilipsHueMessageSender(ILogger<PhilipsHueMessageSender> logger, IConfiguration config)
+    {
+        _logger = logger;
+        config.GetSection("Api:PhilipsHueConfiguration").Bind(_configuration);
+
+        if (_configuration == null ||
+            string.IsNullOrEmpty(_configuration.AccessKey) ||
+            string.IsNullOrEmpty(_configuration.IP))
+        {
+            throw new ApplicationException("PhilipsHue configuration is missing.");
+        }
+    }
     
     public void AddToQueue(PhilipsHueRequestModel model)
     {
+        string[] ids = model.Id.Split(';');
+
+        foreach (var id in ids)
+        {
+            _requestModels.Enqueue(new PhilipsHueRequestModel
+            {
+                Id = id,
+                LightType = model.LightType,
+                ResourceType = model.ResourceType,
+                TransitionTime = model.TransitionTime
+            });
+        }
         _requestModels.Enqueue(model);
     }
 
@@ -45,23 +72,23 @@ public class PhilipsHueMessageSender(ILogger<PhilipsHueMessageSender> logger)
 
         if (string.IsNullOrEmpty(commandBody))
         {
-            logger.LogError(
+            _logger.LogError(
                 $"Invalid Request. No Command created::: {model}");
             return true;
         }
 
 
-        logger.LogInformation($"Body: {commandBody}");
+        _logger.LogInformation($"Body: {commandBody}");
 
         using var handler = new HttpClientHandlerInsecure();
         using HttpClient client = new HttpClient(handler);
-        client.DefaultRequestHeaders.Add("hue-application-key", model.AccessKey);
-        HttpResponseMessage response = await client.PutAsync($"https://{model.Ip}/clip/v2/resource/{model.ResourceType}/{model.Id}",
+        client.DefaultRequestHeaders.Add("hue-application-key", _configuration.AccessKey);
+        HttpResponseMessage response = await client.PutAsync($"https://{_configuration.IP}/clip/v2/resource/{model.ResourceType}/{model.Id}",
             new StringContent(commandBody));
 
         if (!response.IsSuccessStatusCode)
         {
-            logger.LogError($"Response status code: {response.StatusCode}. Body: {await response.Content.ReadAsStringAsync()}");
+            _logger.LogError($"Response status code: {response.StatusCode}. Body: {await response.Content.ReadAsStringAsync()}");
             return false;
         }
 
@@ -218,10 +245,9 @@ public class PhilipsHueMessageSender(ILogger<PhilipsHueMessageSender> logger)
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, ex.Message);
+                    _logger.LogError(ex, ex.Message);
                     _requestModels.Enqueue(model);
                 }
-                
             }
             Thread.Sleep(50);
         }
