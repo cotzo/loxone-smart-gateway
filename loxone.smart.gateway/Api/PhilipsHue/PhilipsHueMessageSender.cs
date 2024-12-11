@@ -83,12 +83,14 @@ public class PhilipsHueMessageSender
         using var handler = new HttpClientHandlerInsecure();
         using HttpClient client = new HttpClient(handler);
         client.DefaultRequestHeaders.Add("hue-application-key", _configuration.AccessKey);
-        HttpResponseMessage response = await client.PutAsync($"https://{_configuration.IP}/clip/v2/resource/{model.ResourceType}/{model.Id}",
+        string url = $"https://{_configuration.IP}/clip/v2/resource/{model.ResourceType}/{model.Id}";
+        
+        HttpResponseMessage response = await client.PutAsync(url,
             new StringContent(commandBody));
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogError($"Response status code: {response.StatusCode}. Body: {await response.Content.ReadAsStringAsync()}");
+            _logger.LogError($"Response status code: {response.StatusCode}. Response Body: {await response.Content.ReadAsStringAsync()}. Request URL: {url}");
             return false;
         }
 
