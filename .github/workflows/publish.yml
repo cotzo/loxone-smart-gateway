@@ -49,7 +49,8 @@ jobs:
         id: push
         uses: docker/build-push-action@v6
         with:
-          context: "{{defaultContext}}:loxone.smart.gateway"
+          context: "loxone.smart.gateway/"
+          file: "loxone.smart.gateway/Dockerfile"
           platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
