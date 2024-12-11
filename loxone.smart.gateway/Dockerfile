@@ -8,9 +8,13 @@ FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 COPY ["loxone.smart.gateway.csproj", "./"]
+RUN "ls -R"
 RUN dotnet restore "loxone.smart.gateway.csproj"
+RUN "ls -R"
 COPY . .
-WORKDIR "/src/"
+RUN "ls -R"
+WORKDIR /src
+RUN "ls -R"
 RUN dotnet build "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -o /app/build
 
 FROM build AS publish
