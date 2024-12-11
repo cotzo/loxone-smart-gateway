@@ -36,7 +36,6 @@ public class PhilipsHueMessageSender
                 TransitionTime = model.TransitionTime
             });
         }
-        _requestModels.Enqueue(model);
     }
 
     private async Task<bool> ProcessMessage(PhilipsHueRequestModel model)
