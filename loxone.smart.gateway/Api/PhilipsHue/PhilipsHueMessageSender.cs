@@ -33,7 +33,8 @@ public class PhilipsHueMessageSender
                 Id = id,
                 LightType = model.LightType,
                 ResourceType = model.ResourceType,
-                TransitionTime = model.TransitionTime
+                TransitionTime = model.TransitionTime,
+                Value = model.Value
             });
         }
     }
