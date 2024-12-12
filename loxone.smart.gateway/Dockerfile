@@ -19,7 +19,7 @@ FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
 ARG TARGETARCH
 ARG BUILDPLATFORM
-RUN dotnet publish "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false --self-contained true /p:PublishTrimmed=true /p:PublishSingleFile=true -a $TARGETARCH
+RUN dotnet publish "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:PublishTrimmed=true /p:PublishSingleFile=true -a $TARGETARCH
 
 FROM --platform=$BUILDPLATFORM base AS final
 ARG TARGETARCH
