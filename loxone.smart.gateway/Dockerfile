@@ -3,10 +3,11 @@ WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081
 
-FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
 ARG BUILD_CONFIGURATION=Release
 ARG TARGETARCH
 ARG BUILDPLATFORM 
+
 WORKDIR /src
 COPY ["loxone.smart.gateway.csproj", "./"]
 RUN dotnet restore "loxone.smart.gateway.csproj" -a $TARGETARCH
@@ -20,7 +21,7 @@ ARG TARGETARCH
 ARG BUILDPLATFORM
 RUN dotnet publish "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false --self-contained true /p:PublishTrimmed=true /p:PublishSingleFile=true -a $TARGETARCH
 
-FROM base AS final
+FROM --platform=$BUILDPLATFORM base AS final
 ARG TARGETARCH
 ARG BUILDPLATFORM
 
