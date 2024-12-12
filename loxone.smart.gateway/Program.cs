@@ -14,6 +14,7 @@ builder.Services.AddLogging(loggingBuilder => {
     loggingBuilder.AddFile(loggingSection);
 });
 
+builder.Services.AddHealthChecks();
 builder.Services.AddControllers();
 builder.Services.AddSingleton<PhilipsHueMessageSender>();
 
