@@ -1,4 +1,5 @@
 using loxone.smart.gateway.Api.PhilipsHue;
+using NReco.Logging.File;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.ConfigureHostOptions((_, options) =>
@@ -7,6 +8,11 @@ builder.Host.ConfigureHostOptions((_, options) =>
 });
 
 // Add services to the container.
+
+builder.Services.AddLogging(loggingBuilder => {
+    var loggingSection = builder.Configuration.GetSection("Logging");
+    loggingBuilder.AddFile(loggingSection);
+});
 
 builder.Services.AddControllers();
 builder.Services.AddSingleton<PhilipsHueMessageSender>();
