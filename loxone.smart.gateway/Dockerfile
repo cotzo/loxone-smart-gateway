@@ -1,6 +1,6 @@
 ﻿FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
 USER $APP_UID
-ARG TARGETARCH
+ARG TARGETARCH=arm64
 WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081
