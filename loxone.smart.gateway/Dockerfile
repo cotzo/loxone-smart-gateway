@@ -25,7 +25,12 @@ FROM --platform=$BUILDPLATFORM base AS final
 ARG TARGETARCH
 ARG BUILDPLATFORM
 
+RUN adduser --disabled-password \
+    --home /app \
+    --gecos '' dotnetuser && chown -R dotnetuser /app 
+
+USER dotnetuser
+
 WORKDIR /app
 COPY --from=publish /app/publish .
-USER $APP_UID
 ENTRYPOINT ["dotnet", "loxone.smart.gateway.dll"]
