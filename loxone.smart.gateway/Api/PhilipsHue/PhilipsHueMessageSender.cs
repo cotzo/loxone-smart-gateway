@@ -38,6 +38,54 @@ public class PhilipsHueMessageSender
             });
         }
     }
+    
+    private async Task StartBackgroundWork(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            if (cancellationToken.IsCancellationRequested && _requestModels.Count == 0)
+            {
+                return;
+            }   
+            
+            if (_requestModels.TryDequeue(out var model))
+            {
+                if (model.Retries < 10)
+                {
+                    try
+                    {
+                        var result = await ProcessMessage(model);
+                    
+                        if (!result)
+                            _requestModels.Enqueue(model);
+                    }
+                    catch (Exception ex)
+                    {
+                        model.Retries++;
+                    
+                        _logger.LogError(ex, ex.Message);
+                        _requestModels.Enqueue(model);
+                    }
+                }
+                else
+                {
+                    _logger.LogError($"Failed to process message {model} for 10 times. Removing from queue");
+                }
+            }
+            Thread.Sleep(50);
+        }
+    }
+    
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.Yield();
+        await StartBackgroundWork(stoppingToken);
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken);
+    }
 
     private async Task<bool> ProcessMessage(PhilipsHueRequestModel model)
     {
@@ -225,44 +273,5 @@ public class PhilipsHueMessageSender
 
         return
             $"{{\"color\": {{\"xy\": {{\"x\": {cx:F4}, \"y\": {cy:F4}}}}}, \"dimming\": {{\"brightness\": {bri}}}, \"on\": {{\"on\": true}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
-    }
-    
-    private async Task StartBackgroundWork(CancellationToken cancellationToken)
-    {
-        while (true)
-        {
-            if (cancellationToken.IsCancellationRequested && _requestModels.Count == 0)
-            {
-                return;
-            }   
-            
-            if (_requestModels.TryDequeue(out var model))
-            {
-                try
-                {
-                    var result = await ProcessMessage(model);
-                    
-                    if (!result)
-                        _requestModels.Enqueue(model);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, ex.Message);
-                    _requestModels.Enqueue(model);
-                }
-            }
-            Thread.Sleep(50);
-        }
-    }
-    
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        await Task.Yield();
-        await StartBackgroundWork(stoppingToken);
-    }
-
-    public override async Task StopAsync(CancellationToken cancellationToken)
-    {
-        await base.StopAsync(cancellationToken);
     }
 }

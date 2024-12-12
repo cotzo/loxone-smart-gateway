@@ -18,6 +18,8 @@ public class PhilipsHueRequestModel
     
     [FromQuery]
     public int TransitionTime { get; set; }
+    
+    public int Retries { get; set; }
 
     public override string ToString()
     {
