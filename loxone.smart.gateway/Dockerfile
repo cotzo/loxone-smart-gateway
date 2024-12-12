@@ -1,5 +1,6 @@
-﻿FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
+﻿FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
 USER $APP_UID
+ARG TARGETARCH
 WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081
@@ -8,22 +9,14 @@ FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 COPY ["loxone.smart.gateway.csproj", "./"]
-RUN dir -R
-RUN dir -R /app; exit 0
-RUN dotnet restore "loxone.smart.gateway.csproj"
-RUN dir -R
+RUN dotnet restore -a $TARGETARCH "loxone.smart.gateway.csproj"
 COPY . .
-RUN dir -R
-RUN dir -R /app; exit 0
 WORKDIR /src
-RUN dir -R
-RUN dir -R /app; exit 0
-RUN dotnet build "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -o /app/build
+RUN dotnet build "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -a $TARGETARCH -o /app/build
 
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dir -R /app; exit 0
-RUN dotnet publish "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "loxone.smart.gateway.csproj" -c $BUILD_CONFIGURATION -a $TARGETARCH -o /app/publish /p:UseAppHost=false
 
 FROM base AS final
 WORKDIR /app
