@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace loxone.smart.gateway.Api.PhilipsHue;
 
@@ -6,12 +7,14 @@ public class PhilipsHueMessageSender
     : BackgroundService
 {
     private readonly ILogger<PhilipsHueMessageSender> _logger;
+    private readonly PhilipsHueMetrics _metrics;
     private readonly ConcurrentQueue<PhilipsHueRequestModel> _requestModels = new();
     private readonly PhilipsHueConfiguration _configuration = new();
 
-    public PhilipsHueMessageSender(ILogger<PhilipsHueMessageSender> logger, IConfiguration config)
+    public PhilipsHueMessageSender(ILogger<PhilipsHueMessageSender> logger, IConfiguration config, PhilipsHueMetrics metrics)
     {
         _logger = logger;
+        _metrics = metrics;
         config.GetSection("Api:PhilipsHueConfiguration").Bind(_configuration);
 
         if (_configuration == null ||
@@ -55,7 +58,7 @@ public class PhilipsHueMessageSender
                     try
                     {
                         var result = await ProcessMessage(model);
-                    
+                        
                         if (!result)
                             _requestModels.Enqueue(model);
                     }
@@ -128,18 +131,29 @@ public class PhilipsHueMessageSender
 
         _logger.LogInformation($"Body: {commandBody}");
 
-        using var handler = new HttpClientHandlerInsecure();
-        using HttpClient client = new HttpClient(handler);
-        client.DefaultRequestHeaders.Add("hue-application-key", _configuration.AccessKey);
-        string url = $"https://{_configuration.IP}/clip/v2/resource/{model.ResourceType}/{model.Id}";
-        
-        HttpResponseMessage response = await client.PutAsync(url,
-            new StringContent(commandBody));
+        Stopwatch stopwatch = Stopwatch.StartNew();
 
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            _logger.LogError($"Response status code: {response.StatusCode}. Response Body: {await response.Content.ReadAsStringAsync()}. Request URL: {url}");
-            return false;
+            using var handler = new HttpClientHandlerInsecure();
+            using HttpClient client = new HttpClient(handler);
+            client.Timeout = TimeSpan.FromSeconds(10);
+            client.DefaultRequestHeaders.Add("hue-application-key", _configuration.AccessKey);
+            string url = $"https://{_configuration.IP}/clip/v2/resource/{model.ResourceType}/{model.Id}";
+            
+            HttpResponseMessage response = await client.PutAsync(url,
+                new StringContent(commandBody));
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError($"Response status code: {response.StatusCode}. Response Body: {await response.Content.ReadAsStringAsync()}. Request URL: {url}");
+                return false;
+            }
+        }
+        finally
+        {
+            stopwatch.Stop();
+            _metrics.RecordDuration(stopwatch.ElapsedMilliseconds, model.ResourceType);
         }
 
         return true;
