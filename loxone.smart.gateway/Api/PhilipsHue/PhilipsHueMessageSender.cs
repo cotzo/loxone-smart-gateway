@@ -129,7 +129,7 @@ public class PhilipsHueMessageSender
         }
 
 
-        _logger.LogInformation($"Body: {commandBody}");
+        _logger.LogInformation($"Body: {commandBody}. Resource Type: {model.ResourceType}. Id: {model.Id}");
 
         Stopwatch stopwatch = Stopwatch.StartNew();
 
