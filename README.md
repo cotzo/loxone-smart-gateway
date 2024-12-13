@@ -2,7 +2,7 @@
 
 Loxone Smart Gateway is a self-hosted local API with the purpose to bridge the gap between Loxone Ecosystem and 3rd party smart home providers. This bridge solves many limitations of the Loxone ecosystem like Custom Programming (PicoC) which does not support https requests, are limited in number of instances etc.
 
-Please not that this bridge does not store any information and does not pass it externally.
+Please note that this bridge does not store any information and does not pass it externally.
 
 This application exposes OpenTelemetry data that can be used by Prometheus and visualised in Grafana.
 
@@ -26,7 +26,7 @@ The operations for grouped lighs are much more intensive for Hue Bridge since th
 | Configuration:EnablePrometheus | Enable or disable Prometheus metrics. Optional, default false |
 
 
-- Create a new Virtual Output in Loxone and set the correct address `http://<your-raspberry-pi-ip>:<container-port>`
+- Create a new Virtual Output in Loxone and set the correct address `http://<your-raspberry-pi-ip>:<container-port>`. Also set `Close connection after seding` to `on` and remove any data from the `Separator` field.
 - Generate a Philips hue API key. [This blog entry](https://www.sitebase.be/generate-phillips-hue-api-token/) describes how to do this
 - Create Virtual Outputs for each light you want to control.
 
