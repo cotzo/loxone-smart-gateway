@@ -5,7 +5,7 @@ namespace loxone.smart.gateway.Api.PhilipsHue;
 public class PhilipsHueRequestModel
 {
     [FromRoute]
-    public string Id { get; set; }
+    public required string Id { get; set; }
     
     [FromBody]
     public int Value { get; set; }
@@ -14,7 +14,7 @@ public class PhilipsHueRequestModel
     public PhilipsHueLightType LightType { get; set; }
     
     [FromQuery]
-    public string ResourceType { get; set; }
+    public required string ResourceType { get; set; }
     
     [FromQuery]
     public int TransitionTime { get; set; }

@@ -46,7 +46,7 @@ public class PhilipsHueMessageSender
     {
         while (true)
         {
-            if (cancellationToken.IsCancellationRequested && _requestModels.Count == 0)
+            if (cancellationToken.IsCancellationRequested && _requestModels.IsEmpty)
             {
                 return;
             }   
