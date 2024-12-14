@@ -11,7 +11,7 @@ public class PhilipsHueController(ILogger<PhilipsHueController> logger, PhilipsH
     public IActionResult SetLights(PhilipsHueRequestModel model)
     {
         logger.LogInformation(
-            $"New Request::: id: {model.Id}, value: {model.Value}, lightType: {model.LightType}, resourceType: {model.ResourceType}  ");
+            $"New Request:: id: {model.Id}, value: {model.Value}, lightType: {model.LightType}, resourceType: {model.ResourceType}");
 
         sender.AddToQueue(model);
 

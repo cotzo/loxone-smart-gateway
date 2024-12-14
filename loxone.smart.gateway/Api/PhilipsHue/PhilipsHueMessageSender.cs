@@ -128,20 +128,19 @@ public class PhilipsHueMessageSender
             return true;
         }
 
-
         _logger.LogInformation($"Body: {commandBody}. Resource Type: {model.ResourceType}. Id: {model.Id}");
 
-        Stopwatch stopwatch = Stopwatch.StartNew();
+        var stopwatch = Stopwatch.StartNew();
 
         try
         {
             using var handler = new HttpClientHandlerInsecure();
-            using HttpClient client = new HttpClient(handler);
+            using var client = new HttpClient(handler);
             client.Timeout = TimeSpan.FromSeconds(10);
             client.DefaultRequestHeaders.Add("hue-application-key", _configuration.AccessKey);
             string url = $"https://{_configuration.IP}/clip/v2/resource/{model.ResourceType}/{model.Id}";
             
-            HttpResponseMessage response = await client.PutAsync(url,
+            var response = await client.PutAsync(url,
                 new StringContent(commandBody));
 
             if (!response.IsSuccessStatusCode)
@@ -161,12 +160,9 @@ public class PhilipsHueMessageSender
     
     private static string GetOnOffCommand(int value, int transitionTime)
     {
-        if (value == 0)
-        {
-            return $"{{\"on\": {{\"on\": false}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
-        }
-
-        return $"{{\"on\": {{\"on\": true}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
+        var on = value == 0 ? "false" : "true";
+        
+        return $"{{\"on\": {{\"on\": {on}}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
     }
 
     private static string GetDimCommand(int value, int transitionTime)
@@ -205,7 +201,7 @@ public class PhilipsHueMessageSender
         }
     }
 
-    private string GetRgbCommand(int value, int transitionTime)
+    private static string GetRgbCommand(int value, int transitionTime)
     {
         // Check if brightness is set to 0 and leave early
         if (0 == value)
