@@ -168,15 +168,9 @@ public class PhilipsHueMessageSender
     private static string GetDimCommand(int value, int transitionTime)
     {
         // Check if brightness is set to 0 and leave early
-        if (0 == value)
-        {
-            return GetOnOffCommand(0, transitionTime);
-        }
-        else
-        {
-            return
-                $"{{\"on\": {{\"on\": true}}, \"dimming\": {{\"brightness\": {value}}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
-        }
+        return 0 == value ? 
+            GetOnOffCommand(0, transitionTime) : 
+            $"{{\"on\": {{\"on\": true}}, \"dimming\": {{\"brightness\": {value}}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
     }
 
     private static string GetTunableCommand(int value, int transitionTime)
@@ -185,20 +179,14 @@ public class PhilipsHueMessageSender
             return GetOnOffCommand(0, transitionTime);
         
         var brightness = (value - 200000000) / 10000; // 0-100
-        var temperature = (value - 200000000) - (brightness * 10000); // Kelvin 2700 - 6500
+        var temperature = value - 200000000 - brightness * 10000; // Kelvin 2700 - 6500
 
         temperature = 1000000 / temperature; // 154 - 370
 
         // Check if input value was set to 0 or brightness is set to 0
-        if (0 == brightness)
-        {
-            return GetOnOffCommand(0, transitionTime);
-        }
-        else
-        {
-            return
-                $"{{\"on\": {{\"on\": true}}, \"dimming\": {{\"brightness\": {brightness}}}, \"color_temperature\": {{\"mirek\": {temperature}}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
-        }
+        return 0 == brightness ? 
+            GetOnOffCommand(0, transitionTime) : 
+            $"{{\"on\": {{\"on\": true}}, \"dimming\": {{\"brightness\": {brightness}}}, \"color_temperature\": {{\"mirek\": {temperature}}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
     }
 
     private static string GetRgbCommand(int value, int transitionTime)
@@ -210,8 +198,8 @@ public class PhilipsHueMessageSender
         }
 
         int blueInput = value / 1000000;
-        int greenInput = (value - (blueInput * 1000000)) / 1000;
-        int redInput = value - (blueInput * 1000000) - (greenInput * 1000);
+        int greenInput = (value - blueInput * 1000000) / 1000;
+        int redInput = value - blueInput * 1000000 - greenInput * 1000;
 
         double blue = blueInput;
         double green = greenInput;
@@ -269,7 +257,7 @@ public class PhilipsHueMessageSender
         var z = red * 0.000088f + green * 0.072310f + blue * 0.986039f;
 
         // Calculate xy and bri
-        if ((x + y + z) == 0)
+        if (x + y + z == 0)
         {
             cx = 0;
             cy = 0;
