@@ -1,8 +1,11 @@
 using loxone.smart.gateway.Api.PhilipsHue;
-using NReco.Logging.File;
 using OpenTelemetry.Metrics;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSerilog((hostingContext, loggerConfiguration) =>
+    loggerConfiguration.ReadFrom.Configuration(hostingContext.Configuration));
 
 bool enablePrometheus = bool.Parse(builder.Configuration["Configuration:EnablePrometheus"] ?? "false");
 if (enablePrometheus)
@@ -33,12 +36,6 @@ builder.Host.ConfigureHostOptions((_, options) =>
 });
 
 // Add services to the container.
-
-builder.Services.AddLogging(loggingBuilder => {
-    var loggingSection = builder.Configuration.GetSection("Logging");
-    loggingBuilder.AddFile(loggingSection);
-});
-
 builder.Services.AddHealthChecks();
 builder.Services.AddControllers();
 
