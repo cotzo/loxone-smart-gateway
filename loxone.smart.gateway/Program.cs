@@ -35,6 +35,8 @@ builder.Host.ConfigureHostOptions((_, options) =>
     options.ShutdownTimeout = TimeSpan.FromMinutes(1);
 });
 
+builder.Services.AddHttpContextAccessor();
+
 // Add services to the container.
 builder.Services.AddHealthChecks();
 builder.Services.AddControllers();

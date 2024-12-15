@@ -1,19 +1,18 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using Serilog;
 
 namespace loxone.smart.gateway.Api.PhilipsHue;
 
 public class PhilipsHueMessageSender
     : BackgroundService
 {
-    private readonly ILogger<PhilipsHueMessageSender> _logger;
     private readonly PhilipsHueMetrics _metrics;
     private readonly ConcurrentQueue<PhilipsHueRequestModel> _requestModels = new();
     private readonly PhilipsHueConfiguration _configuration = new();
 
-    public PhilipsHueMessageSender(ILogger<PhilipsHueMessageSender> logger, IConfiguration config, PhilipsHueMetrics metrics)
+    public PhilipsHueMessageSender(IConfiguration config, PhilipsHueMetrics metrics)
     {
-        _logger = logger;
         _metrics = metrics;
         config.GetSection("Api:PhilipsHueConfiguration").Bind(_configuration);
 
@@ -66,13 +65,13 @@ public class PhilipsHueMessageSender
                     {
                         model.Retries++;
                     
-                        _logger.LogError(ex, ex.Message);
+                        Log.Error(ex, "Error while processing message");
                         _requestModels.Enqueue(model);
                     }
                 }
                 else
                 {
-                    _logger.LogError($"Failed to process message {model} for 10 times. Removing from queue");
+                    Log.Error("Failed to process message {model} for 10 times. Removing from queue", model);
                 }
             }
             Thread.Sleep(50);
@@ -123,12 +122,11 @@ public class PhilipsHueMessageSender
 
         if (string.IsNullOrEmpty(commandBody))
         {
-            _logger.LogError(
-                $"Invalid Request. No Command created::: {model}");
+            Log.Error("Invalid Request. No Command created::: {model}", model);
             return true;
         }
 
-        _logger.LogInformation($"Body: {commandBody}. Resource Type: {model.ResourceType}. Id: {model.Id}");
+        Log.Information("Body: {commandBody}. Resource Type: {resource}. Id: {id}", commandBody, model.ResourceType, model.Id);
 
         var stopwatch = Stopwatch.StartNew();
 
@@ -145,7 +143,7 @@ public class PhilipsHueMessageSender
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError($"Response status code: {response.StatusCode}. Response Body: {await response.Content.ReadAsStringAsync()}. Request URL: {url}");
+                Log.Error("Response status code: {statusCode}. Response Body: {body}. Request URL: {url}", response.StatusCode, await response.Content.ReadAsStringAsync(), url);
                 return false;
             }
         }
