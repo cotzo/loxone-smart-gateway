@@ -57,14 +57,17 @@ public class PhilipsHueMessageSender
                     try
                     {
                         var result = await ProcessMessage(model);
-                        
+
                         if (!result)
+                        {
+                            model.Retries++;
                             _requestModels.Enqueue(model);
+                        }
                     }
                     catch (Exception ex)
                     {
                         model.Retries++;
-                    
+
                         Log.Error(ex, "Error while processing message");
                         _requestModels.Enqueue(model);
                     }
