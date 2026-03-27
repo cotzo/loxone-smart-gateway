@@ -10,6 +10,7 @@ public class PhilipsHueMessageSender
     private readonly PhilipsHueMetrics _metrics;
     private readonly ConcurrentQueue<PhilipsHueRequestModel> _requestModels = new();
     private readonly PhilipsHueConfiguration _configuration = new();
+    private readonly HashSet<string> _knownLightIds = new();
 
     public PhilipsHueMessageSender(IConfiguration config, PhilipsHueMetrics metrics)
     {
@@ -131,6 +132,11 @@ public class PhilipsHueMessageSender
 
         Log.Information("Body: {commandBody}. Resource Type: {resource}. Id: {id}", commandBody, model.ResourceType, model.Id);
 
+        if (model.ResourceType == "light" && _knownLightIds.Add(model.Id))
+        {
+            await SetPowerOnBehavior(model.Id);
+        }
+
         var stopwatch = Stopwatch.StartNew();
 
         try
@@ -159,6 +165,35 @@ public class PhilipsHueMessageSender
         return true;
     }
     
+    private async Task SetPowerOnBehavior(string lightId)
+    {
+        try
+        {
+            using var handler = new HttpClientHandlerInsecure();
+            using var client = new HttpClient(handler);
+            client.Timeout = TimeSpan.FromSeconds(10);
+            client.DefaultRequestHeaders.Add("hue-application-key", _configuration.AccessKey);
+
+            var url = $"https://{_configuration.IP}/clip/v2/resource/light/{lightId}";
+            var body = new StringContent("{\"powerup\": {\"preset\": \"last_on_state\"}}");
+
+            var response = await client.PutAsync(url, body);
+
+            if (response.IsSuccessStatusCode)
+            {
+                Log.Information("Set power-on behavior to last_on_state for light {lightId}", lightId);
+            }
+            else
+            {
+                Log.Warning("Failed to set power-on behavior for light {lightId}: {statusCode}", lightId, response.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to set power-on behavior for light {lightId}", lightId);
+        }
+    }
+
     private static string GetOnOffCommand(int value, int transitionTime)
     {
         var on = value == 0 ? "false" : "true";
