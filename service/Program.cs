@@ -7,7 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog((hostingContext, loggerConfiguration) =>
     loggerConfiguration.ReadFrom.Configuration(hostingContext.Configuration));
 
-bool enablePrometheus = bool.Parse(builder.Configuration["Configuration:EnablePrometheus"] ?? "false");
+var enablePrometheus = bool.Parse(builder.Configuration["Configuration:EnablePrometheus"] ?? "false");
 if (enablePrometheus)
 {
     builder.Services.AddOpenTelemetry()

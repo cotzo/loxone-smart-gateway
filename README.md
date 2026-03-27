@@ -2,55 +2,98 @@
 
 [![HitCount](https://hits.dwyl.com/cotzo/loxone-smart-gateway.svg?style=flat-square)](http://hits.dwyl.com/cotzo/loxone-smart-gateway)
 
-Loxone Smart Gateway is a self-hosted local API with the purpose to bridge the gap between Loxone Ecosystem and 3rd party smart home providers. This bridge solves many limitations of the Loxone ecosystem like Custom Programming (PicoC) which does not support https requests, are limited in number of instances etc.
+Loxone Smart Gateway is a self-hosted local API that bridges the gap between the Loxone Ecosystem and 3rd party smart home providers. It solves many limitations of the Loxone ecosystem — Custom Programming (PicoC) does not support HTTPS requests and is limited in the number of instances, among other constraints.
 
-Please note that this bridge does not store any information and does not pass it externally.
+This bridge does not store any information and does not pass data externally. It exposes OpenTelemetry metrics that can be scraped by Prometheus and visualised in Grafana.
 
-This application exposes OpenTelemetry data that can be used by Prometheus and visualised in Grafana.
+## Quick Start
+
+```yaml
+# docker-compose.yaml
+version: '3'
+services:
+  loxone-smart-gateway:
+    image: ghcr.io/cotzo/loxone-smart-gateway:latest
+    restart: always
+    ports:
+      - 8080:8080
+    environment:
+      - Api:PhilipsHueConfiguration:IP=<your-bridge-ip>
+      - Api:PhilipsHueConfiguration:AccessKey=<your-access-key>
+```
+
+```bash
+docker-compose up -d
+```
+
+## Configuration
+
+| Environment Variable | Description | Default |
+| --- | --- | --- |
+| `Api:PhilipsHueConfiguration:IP` | IP address of your Hue Bridge | *(required)* |
+| `Api:PhilipsHueConfiguration:AccessKey` | Access Key for the Hue Bridge API | *(required)* |
+| `Configuration:EnablePrometheus` | Enable Prometheus metrics endpoint | `false` |
+
+To generate a Philips Hue API key, follow [this guide](https://www.sitebase.be/generate-phillips-hue-api-token/).
 
 ## Plugins
 
-### 1. Philips Hue
+### Philips Hue
 
-The Philips Hue Plugin allows control of RGB, Tunable, Dim and On/Off lights through Virtual Outputs through the newly launched Hue API v2
+Controls RGB, Tunable, Dim and On/Off lights through Loxone Virtual Outputs using the Hue API v2.
 
-**NOTE**:
-The operations for grouped lighs are much more intensive for Hue Bridge since they are sending broadcast messages on Zigbee network. They are recommending to not have more than 1 request per second for grouped lights but from personal testing it works to have a couple of them in your instance
+**NOTE**: Operations for grouped lights are more intensive for the Hue Bridge since they broadcast on the Zigbee network. Philips recommends no more than 1 request per second for grouped lights, though in practice a few concurrent requests tend to work.
 
-#### Installation
+#### Loxone Setup
 
-- Run the provided docker image on a RaspberryPi with the following environment variables:
-  
-| Env | Description |
-| --- | ----------- |
-| Api:PhilipsHueConfiguration:IP | The IP address of your Hue Bridge |
-| Api:PhilipsHueConfiguration:AccessKey | The Access Key of your Hue Bridge |
-| Configuration:EnablePrometheus | Enable or disable Prometheus metrics. Optional, default false |
+1. Create a new **Virtual Output** in Loxone Config and set the address to `http://<gateway-ip>:8080`. Set `Close connection after sending` to `on` and clear the `Separator` field.
 
+2. Create **Virtual Output Commands** for each light you want to control:
 
-- Create a new Virtual Output in Loxone and set the correct address `http://<your-raspberry-pi-ip>:<container-port>`. Also set `Close connection after seding` to `on` and remove any data from the `Separator` field.
-- Generate a Philips hue API key. [This blog entry](https://www.sitebase.be/generate-phillips-hue-api-token/) describes how to do this
-- Create Virtual Outputs for each light you want to control.
+| Virtual Output Parameter | Value |
+| --- | --- |
+| Command for ON | See URL format below |
+| HTTP Header for ON | `Content-Type: application/json` |
+| HTTP Body for ON | `<v>` |
+| Use as Digital Output | `off` |
 
-| Virtual Output Parameter | Description |
-| ------------------------ | ----------- |
-| Command for ON           | Described further down |
-| HTTP Header for ON       | `Content-Type: application/json` |
-| HTTP Body for ON         | `<v>`       |
-| Use as Digital Output    | `off`       |
+3. Set the **Command for ON** URL:
 
-- Configure the Command for ON URL
+```
+/PhilipsHue/<light-id>?lightType=RGB&resourceType=grouped_light&transitionTime=1000
+```
 
-e.g. `/PhilipsHue/1feccf7d-3943-4450-a9c8-75c9bef4d31b?lightType=RGB&resourceType=grouped_light&transitionTime=1000`
+Replace `<light-id>` with the Hue Light ID or Light Group ID.
 
-The Light ID or LightGroup ID should be added to the path
+#### Query Parameters
 
-- Query Parameters
+| Name | Description | Values |
+| --- | --- | --- |
+| `lightType` | Type of light being controlled | `RGB`, `TUNABLE`, `DIM`, `ONOFF` |
+| `resourceType` | Hue resource type | `light`, `grouped_light` |
+| `transitionTime` | Fade effect duration in milliseconds | Integer |
 
-| Name      | Description       |
-| --------- | ----------------- |
-| lightType | One of: RGB, TUNABLE, DIM, ONOFF |
-| resourceType | One of: light, grouped_light |
-| transitionTime | Fade effect duration in ms |
+The light circuit in Loxone must be set to **Lumitech DMX**.
 
-Please note that the light circuit in Loxone has to be set to Lumitech DMX
+## API Endpoints
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/PhilipsHue/{id}` | Enqueue a light control request |
+| `GET` | `/health` | Health check |
+| `GET` | `/metrics` | Prometheus metrics (when enabled) |
+
+## Building from Source
+
+Requires [.NET 10 SDK](https://dotnet.microsoft.com/download).
+
+```bash
+# Build
+dotnet build service/service.csproj
+
+# Run locally (http://localhost:5009)
+dotnet run --project service
+
+# Build Docker image
+docker build -f service/Dockerfile -t loxone-smart-gateway service/
+```

@@ -1,0 +1,21 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "service", "service\service.csproj", "{26F551E2-9D7C-4862-A5B7-C02E11697E5F}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".github", ".github", "{57DB29F3-5845-4355-88D8-05F7986B93CB}"
+	ProjectSection(SolutionItems) = preProject
+		.github\workflows\publish.yml = .github\workflows\publish.yml
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{26F551E2-9D7C-4862-A5B7-C02E11697E5F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{26F551E2-9D7C-4862-A5B7-C02E11697E5F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{26F551E2-9D7C-4862-A5B7-C02E11697E5F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{26F551E2-9D7C-4862-A5B7-C02E11697E5F}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

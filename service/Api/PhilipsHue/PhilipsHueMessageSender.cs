@@ -26,7 +26,7 @@ public class PhilipsHueMessageSender
     
     public void AddToQueue(PhilipsHueRequestModel model)
     {
-        string[] ids = model.Id.Split(';');
+        var ids = model.Id.Split(';');
 
         foreach (var id in ids)
         {
@@ -94,7 +94,7 @@ public class PhilipsHueMessageSender
 
     private async Task<bool> ProcessMessage(PhilipsHueRequestModel model)
     {
-        string commandBody = string.Empty;
+        var commandBody = string.Empty;
 
         switch (model.LightType)
         {
@@ -139,7 +139,7 @@ public class PhilipsHueMessageSender
             using var client = new HttpClient(handler);
             client.Timeout = TimeSpan.FromSeconds(10);
             client.DefaultRequestHeaders.Add("hue-application-key", _configuration.AccessKey);
-            string url = $"https://{_configuration.IP}/clip/v2/resource/{model.ResourceType}/{model.Id}";
+            var url = $"https://{_configuration.IP}/clip/v2/resource/{model.ResourceType}/{model.Id}";
             
             var response = await client.PutAsync(url,
                 new StringContent(commandBody));
@@ -198,9 +198,9 @@ public class PhilipsHueMessageSender
             return GetOnOffCommand(value, transitionTime);
         }
 
-        int blueInput = value / 1000000;
-        int greenInput = (value - blueInput * 1000000) / 1000;
-        int redInput = value - blueInput * 1000000 - greenInput * 1000;
+        var blueInput = value / 1000000;
+        var greenInput = (value - blueInput * 1000000) / 1000;
+        var redInput = value - blueInput * 1000000 - greenInput * 1000;
 
         double blue = blueInput;
         double green = greenInput;
