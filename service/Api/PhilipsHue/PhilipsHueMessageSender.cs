@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
 using Serilog;
 
 namespace loxone.smart.gateway.Api.PhilipsHue;
@@ -8,13 +10,20 @@ public class PhilipsHueMessageSender
     : BackgroundService
 {
     private readonly PhilipsHueMetrics _metrics;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ConcurrentQueue<PhilipsHueRequestModel> _requestModels = new();
     private readonly PhilipsHueConfiguration _configuration = new();
-    private readonly HashSet<string> _knownLightIds = new();
 
-    public PhilipsHueMessageSender(IConfiguration config, PhilipsHueMetrics metrics)
+    private DateTime _lastLightCommand = DateTime.MinValue;
+    private DateTime _lastGroupedLightCommand = DateTime.MinValue;
+
+    private static readonly TimeSpan LightRateLimit = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan GroupedLightRateLimit = TimeSpan.FromMilliseconds(1000);
+
+    public PhilipsHueMessageSender(IConfiguration config, PhilipsHueMetrics metrics, IHttpClientFactory httpClientFactory)
     {
         _metrics = metrics;
+        _httpClientFactory = httpClientFactory;
         config.GetSection("Api:PhilipsHueConfiguration").Bind(_configuration);
 
         if (_configuration == null ||
@@ -24,7 +33,7 @@ public class PhilipsHueMessageSender
             throw new ApplicationException("PhilipsHue configuration is missing.");
         }
     }
-    
+
     public void AddToQueue(PhilipsHueRequestModel model)
     {
         var ids = model.Id.Split(';');
@@ -41,7 +50,7 @@ public class PhilipsHueMessageSender
             });
         }
     }
-    
+
     private async Task StartBackgroundWork(CancellationToken cancellationToken)
     {
         while (true)
@@ -49,12 +58,14 @@ public class PhilipsHueMessageSender
             if (cancellationToken.IsCancellationRequested && _requestModels.IsEmpty)
             {
                 return;
-            }   
-            
+            }
+
             if (_requestModels.TryDequeue(out var model))
             {
                 if (model.Retries < 10)
                 {
+                    await EnforceRateLimit(model.ResourceType);
+
                     try
                     {
                         var result = await ProcessMessage(model);
@@ -78,19 +89,76 @@ public class PhilipsHueMessageSender
                     Log.Error("Failed to process message {model} for 10 times. Removing from queue", model);
                 }
             }
-            Thread.Sleep(50);
+            else
+            {
+                await Task.Delay(50, cancellationToken);
+            }
         }
     }
-    
+
+    private async Task EnforceRateLimit(string resourceType)
+    {
+        var now = DateTime.UtcNow;
+
+        if (resourceType == "grouped_light")
+        {
+            var elapsed = now - _lastGroupedLightCommand;
+            if (elapsed < GroupedLightRateLimit)
+                await Task.Delay(GroupedLightRateLimit - elapsed);
+            _lastGroupedLightCommand = DateTime.UtcNow;
+        }
+        else
+        {
+            var elapsed = now - _lastLightCommand;
+            if (elapsed < LightRateLimit)
+                await Task.Delay(LightRateLimit - elapsed);
+            _lastLightCommand = DateTime.UtcNow;
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await Task.Yield();
+        await ConfigureAllLightsPowerOnBehavior();
         await StartBackgroundWork(stoppingToken);
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken);
+    }
+
+    private async Task ConfigureAllLightsPowerOnBehavior()
+    {
+        try
+        {
+            var client = CreateHttpClient();
+            var url = $"https://{_configuration.IP}/clip/v2/resource/light";
+            var response = await client.GetAsync(url);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Log.Warning("Failed to fetch lights for power-on configuration: {statusCode}", response.StatusCode);
+                return;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var doc = JsonDocument.Parse(json);
+            var lights = doc.RootElement.GetProperty("data");
+
+            foreach (var light in lights.EnumerateArray())
+            {
+                var lightId = light.GetProperty("id").GetString();
+                if (string.IsNullOrEmpty(lightId))
+                    continue;
+
+                await SetPowerOnBehavior(lightId);
+                await Task.Delay(LightRateLimit);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to configure power-on behavior for all lights");
+        }
     }
 
     private async Task<bool> ProcessMessage(PhilipsHueRequestModel model)
@@ -132,23 +200,15 @@ public class PhilipsHueMessageSender
 
         Log.Information("Body: {commandBody}. Resource Type: {resource}. Id: {id}", commandBody, model.ResourceType, model.Id);
 
-        if (model.ResourceType == "light" && _knownLightIds.Add(model.Id))
-        {
-            await SetPowerOnBehavior(model.Id);
-        }
-
         var stopwatch = Stopwatch.StartNew();
 
         try
         {
-            using var handler = new HttpClientHandlerInsecure();
-            using var client = new HttpClient(handler);
-            client.Timeout = TimeSpan.FromSeconds(10);
-            client.DefaultRequestHeaders.Add("hue-application-key", _configuration.AccessKey);
+            var client = CreateHttpClient();
             var url = $"https://{_configuration.IP}/clip/v2/resource/{model.ResourceType}/{model.Id}";
-            
+
             var response = await client.PutAsync(url,
-                new StringContent(commandBody));
+                new StringContent(commandBody, Encoding.UTF8, "application/json"));
 
             if (!response.IsSuccessStatusCode)
             {
@@ -164,24 +224,20 @@ public class PhilipsHueMessageSender
 
         return true;
     }
-    
+
     private async Task SetPowerOnBehavior(string lightId)
     {
         try
         {
-            using var handler = new HttpClientHandlerInsecure();
-            using var client = new HttpClient(handler);
-            client.Timeout = TimeSpan.FromSeconds(10);
-            client.DefaultRequestHeaders.Add("hue-application-key", _configuration.AccessKey);
-
+            var client = CreateHttpClient();
             var url = $"https://{_configuration.IP}/clip/v2/resource/light/{lightId}";
-            var body = new StringContent("{\"powerup\": {\"preset\": \"last_on_state\"}}");
+            var body = new StringContent("{\"powerup\": {\"preset\": \"powerfail\"}}", Encoding.UTF8, "application/json");
 
             var response = await client.PutAsync(url, body);
 
             if (response.IsSuccessStatusCode)
             {
-                Log.Information("Set power-on behavior to last_on_state for light {lightId}", lightId);
+                Log.Information("Set power-on behavior to powerfail for light {lightId}", lightId);
             }
             else
             {
@@ -194,18 +250,26 @@ public class PhilipsHueMessageSender
         }
     }
 
+    private HttpClient CreateHttpClient()
+    {
+        var client = _httpClientFactory.CreateClient("PhilipsHue");
+        client.Timeout = TimeSpan.FromSeconds(10);
+        client.DefaultRequestHeaders.Add("hue-application-key", _configuration.AccessKey);
+        return client;
+    }
+
     private static string GetOnOffCommand(int value, int transitionTime)
     {
         var on = value == 0 ? "false" : "true";
-        
+
         return $"{{\"on\": {{\"on\": {on}}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
     }
 
     private static string GetDimCommand(int value, int transitionTime)
     {
         // Check if brightness is set to 0 and leave early
-        return 0 == value ? 
-            GetOnOffCommand(0, transitionTime) : 
+        return 0 == value ?
+            GetOnOffCommand(0, transitionTime) :
             $"{{\"on\": {{\"on\": true}}, \"dimming\": {{\"brightness\": {value}}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
     }
 
@@ -213,15 +277,15 @@ public class PhilipsHueMessageSender
     {
         if (value == 0)
             return GetOnOffCommand(0, transitionTime);
-        
+
         var brightness = (value - 200000000) / 10000; // 0-100
         var temperature = value - 200000000 - brightness * 10000; // Kelvin 2700 - 6500
 
         temperature = 1000000 / temperature; // 154 - 370
 
         // Check if input value was set to 0 or brightness is set to 0
-        return 0 == brightness ? 
-            GetOnOffCommand(0, transitionTime) : 
+        return 0 == brightness ?
+            GetOnOffCommand(0, transitionTime) :
             $"{{\"on\": {{\"on\": true}}, \"dimming\": {{\"brightness\": {brightness}}}, \"color_temperature\": {{\"mirek\": {temperature}}}, \"dynamics\": {{\"duration\": {transitionTime}}}}}";
     }
 
@@ -240,7 +304,7 @@ public class PhilipsHueMessageSender
         double blue = blueInput;
         double green = greenInput;
         double red = redInput;
-        
+
         double cx;
         double cy;
 

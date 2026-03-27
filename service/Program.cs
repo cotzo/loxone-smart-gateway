@@ -41,7 +41,12 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddHealthChecks();
 builder.Services.AddControllers();
 
-// Philips
+// Philips Hue
+builder.Services.AddHttpClient("PhilipsHue")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+    });
 builder.Services.AddSingleton<PhilipsHueMessageSender>();
 builder.Services.AddHostedService<PhilipsHueMessageSender>(provider => provider.GetRequiredService<PhilipsHueMessageSender>());
 
