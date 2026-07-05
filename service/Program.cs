@@ -43,10 +43,20 @@ builder.Services.AddControllers();
 
 // Philips Hue
 builder.Services.AddHttpClient("PhilipsHue")
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
-        ServerCertificateCustomValidationCallback = (_, _, _, _) => true
-    });
+        // The Hue Bridge lives at a fixed LAN address, so keep the TLS connection open and
+        // reuse it across commands instead of paying a handshake on every (usually sparse) request.
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(10),
+        PooledConnectionLifetime = Timeout.InfiniteTimeSpan,
+        SslOptions =
+        {
+            RemoteCertificateValidationCallback = (_, _, _, _) => true
+        }
+    })
+    // Never recycle the handler: there is no DNS to refresh for a static IP, and recycling
+    // would throw away the warm connection.
+    .SetHandlerLifetime(Timeout.InfiniteTimeSpan);
 builder.Services.AddSingleton<PhilipsHueMessageSender>();
 builder.Services.AddHostedService<PhilipsHueMessageSender>(provider => provider.GetRequiredService<PhilipsHueMessageSender>());
 

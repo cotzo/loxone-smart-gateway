@@ -12,6 +12,7 @@ public class PhilipsHueMessageSender
     private readonly PhilipsHueMetrics _metrics;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ConcurrentQueue<PhilipsHueRequestModel> _requestModels = new();
+    private readonly SemaphoreSlim _signal = new(0);
     private readonly PhilipsHueConfiguration _configuration = new();
 
     private DateTime _lastLightCommand = DateTime.MinValue;
@@ -19,6 +20,7 @@ public class PhilipsHueMessageSender
 
     private static readonly TimeSpan LightRateLimit = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan GroupedLightRateLimit = TimeSpan.FromMilliseconds(1000);
+    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(30);
 
     public PhilipsHueMessageSender(IConfiguration config, PhilipsHueMetrics metrics, IHttpClientFactory httpClientFactory)
     {
@@ -48,6 +50,7 @@ public class PhilipsHueMessageSender
                 TransitionTime = model.TransitionTime,
                 Value = model.Value
             });
+            _signal.Release();
         }
     }
 
@@ -60,38 +63,54 @@ public class PhilipsHueMessageSender
                 return;
             }
 
-            if (_requestModels.TryDequeue(out var model))
+            // Block until a command is enqueued instead of polling, so commands are dispatched
+            // immediately (previously up to 50 ms of added latency per command). On shutdown we
+            // fall through and drain whatever is still queued.
+            if (!cancellationToken.IsCancellationRequested)
             {
-                if (model.Retries < 10)
+                try
                 {
-                    await EnforceRateLimit(model.ResourceType);
+                    await _signal.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Shutting down: loop again to drain the queue, then exit.
+                    continue;
+                }
+            }
 
-                    try
-                    {
-                        var result = await ProcessMessage(model);
+            if (!_requestModels.TryDequeue(out var model))
+            {
+                continue;
+            }
 
-                        if (!result)
-                        {
-                            model.Retries++;
-                            _requestModels.Enqueue(model);
-                        }
-                    }
-                    catch (Exception ex)
+            if (model.Retries < 10)
+            {
+                await EnforceRateLimit(model.ResourceType);
+
+                try
+                {
+                    var result = await ProcessMessage(model);
+
+                    if (!result)
                     {
                         model.Retries++;
-
-                        Log.Error(ex, "Error while processing message");
                         _requestModels.Enqueue(model);
+                        _signal.Release();
                     }
                 }
-                else
+                catch (Exception ex)
                 {
-                    Log.Error("Failed to process message {model} for 10 times. Removing from queue", model);
+                    model.Retries++;
+
+                    Log.Error(ex, "Error while processing message");
+                    _requestModels.Enqueue(model);
+                    _signal.Release();
                 }
             }
             else
             {
-                await Task.Delay(50, cancellationToken);
+                Log.Error("Failed to process message {model} for 10 times. Removing from queue", model);
             }
         }
     }
@@ -119,7 +138,41 @@ public class PhilipsHueMessageSender
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await ConfigureAllLightsPowerOnBehavior();
-        await StartBackgroundWork(stoppingToken);
+
+        // Process the command queue and keep the bridge connection warm in parallel.
+        await Task.WhenAll(
+            StartBackgroundWork(stoppingToken),
+            KeepConnectionWarm(stoppingToken));
+    }
+
+    private async Task KeepConnectionWarm(CancellationToken cancellationToken)
+    {
+        // Periodically ping the bridge so the pooled TLS connection never goes idle. This keeps
+        // every light command handshake-free even after hours of inactivity, and re-establishes
+        // the connection proactively after a bridge reboot or network blip.
+        try
+        {
+            using var timer = new PeriodicTimer(KeepAliveInterval);
+
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                try
+                {
+                    var client = CreateHttpClient();
+                    var url = $"https://{_configuration.IP}/clip/v2/resource/bridge";
+                    using var response = await client.GetAsync(url, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    // A failed ping is harmless: the next real command simply reconnects.
+                    Log.Debug(ex, "Hue keep-alive ping failed");
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutting down.
+        }
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
