@@ -1,6 +1,6 @@
 # Loxone Smart Gateway
 
-A self-hosted local API bridge connecting the Loxone home automation system to third-party smart home providers (currently Philips Hue). Runs entirely on the local network.
+A self-hosted local API bridge connecting the Loxone home automation system to third-party smart home providers (currently Philips Hue and Tuya). Runs entirely on the local network.
 
 ## Tech Stack
 
@@ -19,8 +19,15 @@ service/                          # Main application
     PhilipsHueMetrics.cs          # OpenTelemetry histogram metrics
     PhilipsHueRequestModel.cs     # Request DTO
     Enums.cs                      # LightType enum (Rgb, Tunable, Dim, OnOff)
+  Api/Tuya/                       # Tuya local (LAN) integration
+    TuyaMessageSender.cs          # Background queue processor
+    TuyaLocalConnection.cs        # Tuya local protocol 3.4/3.5 (framing, session key, AES)
+    TuyaConfiguration.cs          # Config model (device list: Name, Id, IP, LocalKey, Version)
+    TuyaMetrics.cs                # OpenTelemetry histogram metrics
+    TuyaRequestModel.cs           # Request DTO
   Controllers/
     PhilipsHueController.cs       # POST /PhilipsHue/{id} endpoint
+    TuyaController.cs             # POST /Tuya/{name} endpoint
   HttpClientHandlerInsecure.cs    # SSL bypass for local Hue Bridge
   Program.cs                      # Startup, DI, Serilog, OpenTelemetry config
 loxone.smart.gateway.sln          # Solution file
@@ -47,6 +54,7 @@ Set via `appsettings.json`, `appsettings.Development.json`, or environment varia
 
 - `Api:PhilipsHueConfiguration:IP` — Hue Bridge IP (required)
 - `Api:PhilipsHueConfiguration:AccessKey` — Hue API key (required)
+- `Api:TuyaConfiguration:Devices:N:{Name,Id,IP,LocalKey,Version}` — Tuya device list (optional; Version is `3.4` or `3.5`, credentials come from `tinytuya wizard`/`scan`)
 - `Configuration:EnablePrometheus` — Enable metrics endpoint (default: false)
 
 ## Architecture Notes
@@ -60,5 +68,6 @@ Set via `appsettings.json`, `appsettings.Development.json`, or environment varia
 ## Endpoints
 
 - `POST /PhilipsHue/{id}` — Enqueue a light control request (query params: `lightType`, `resourceType`, `transitionTime`)
+- `POST /Tuya/{name}` — Enqueue a Tuya data point write (query param: `dp`; JSON body is the DP value and its JSON type must match the DP type)
 - `GET /health` — Health check
 - `GET /metrics` — Prometheus metrics (when enabled)

@@ -1,4 +1,5 @@
 using loxone.smart.gateway.Api.PhilipsHue;
+using loxone.smart.gateway.Api.Tuya;
 using OpenTelemetry.Metrics;
 using Serilog;
 
@@ -18,6 +19,7 @@ if (enablePrometheus)
             prometheus.AddMeter("Microsoft.AspNetCore.Hosting",
                 "Microsoft.AspNetCore.Server.Kestrel");
             prometheus.AddMeter("PhilipsHue");
+            prometheus.AddMeter("Tuya");
             prometheus.AddView("http.server.request.duration",
                 new ExplicitBucketHistogramConfiguration
                 {
@@ -60,10 +62,15 @@ builder.Services.AddHttpClient("PhilipsHue")
 builder.Services.AddSingleton<PhilipsHueMessageSender>();
 builder.Services.AddHostedService<PhilipsHueMessageSender>(provider => provider.GetRequiredService<PhilipsHueMessageSender>());
 
+// Tuya
+builder.Services.AddSingleton<TuyaMessageSender>();
+builder.Services.AddHostedService<TuyaMessageSender>(provider => provider.GetRequiredService<TuyaMessageSender>());
+
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
 builder.Services.AddSingleton<PhilipsHueMetrics>();
+builder.Services.AddSingleton<TuyaMetrics>();
 
 var app = builder.Build();
 

@@ -32,9 +32,16 @@ docker-compose up -d
 | --- | --- | --- |
 | `Api:PhilipsHueConfiguration:IP` | IP address of your Hue Bridge | *(required)* |
 | `Api:PhilipsHueConfiguration:AccessKey` | Access Key for the Hue Bridge API | *(required)* |
+| `Api:TuyaConfiguration:Devices:0:Name` | Friendly name used in the request URL | *(optional)* |
+| `Api:TuyaConfiguration:Devices:0:Id` | Tuya device ID | *(optional)* |
+| `Api:TuyaConfiguration:Devices:0:IP` | Device IP address on the LAN | *(optional)* |
+| `Api:TuyaConfiguration:Devices:0:LocalKey` | Device local key | *(optional)* |
+| `Api:TuyaConfiguration:Devices:0:Version` | Tuya local protocol version (`3.4` or `3.5`) | *(optional)* |
 | `Configuration:EnablePrometheus` | Enable Prometheus metrics endpoint | `false` |
 
 To generate a Philips Hue API key, follow [this guide](https://www.sitebase.be/generate-phillips-hue-api-token/).
+
+Repeat the `Devices:0` block with `Devices:1`, `Devices:2`, ... for additional Tuya devices.
 
 ## Plugins
 
@@ -75,11 +82,45 @@ Replace `<light-id>` with the Hue Light ID or Light Group ID.
 
 The light circuit in Loxone must be set to **Lumitech DMX**.
 
+### Tuya
+
+Controls Tuya WiFi devices (fans, lights, switches, ...) directly over the local network — no Tuya cloud involved at runtime. Supports local protocol versions 3.4 and 3.5.
+
+Each command sets one data point (DP) on a device. DPs are device-specific; a ceiling fan with light typically exposes `1` (fan on/off), `3` (fan speed), `8` (direction) and `15` (light on/off).
+
+#### Obtaining device credentials
+
+Use [tinytuya](https://github.com/jasonacox/tinytuya) once, at setup time:
+
+```bash
+pipx install tinytuya
+tinytuya wizard   # pulls device IDs and local keys from your Tuya IoT cloud project
+tinytuya scan     # shows each device's IP and protocol version
+```
+
+**NOTE**: The local key changes if the device is removed and re-paired in the Smart Life app — rerun the wizard if commands stop working after re-pairing.
+
+#### Loxone Setup
+
+1. Use the same **Virtual Output** as for Philips Hue (`http://<gateway-ip>:8080`).
+
+2. Create a **Virtual Output Command** per action, with `HTTP Header for ON` set to `Content-Type: application/json`:
+
+| Action | Command for ON | HTTP Body for ON |
+| --- | --- | --- |
+| Fan on/off | `/Tuya/fan?dp=1` | `true` / `false` |
+| Fan speed (analog) | `/Tuya/fan?dp=3` | `<v>` |
+| Light on/off | `/Tuya/fan?dp=15` | `true` / `false` |
+| Direction | `/Tuya/fan?dp=8` | `"forward"` / `"reverse"` |
+
+The body is sent to the device as-is, so its JSON type must match the DP type: `true`/`false` for Boolean DPs, a bare number for Integer DPs, a quoted string for Enum DPs.
+
 ## API Endpoints
 
 | Method | Path | Description |
 | --- | --- | --- |
 | `POST` | `/PhilipsHue/{id}` | Enqueue a light control request |
+| `POST` | `/Tuya/{name}` | Enqueue a Tuya data point write (query param: `dp`) |
 | `GET` | `/health` | Health check |
 | `GET` | `/metrics` | Prometheus metrics (when enabled) |
 
