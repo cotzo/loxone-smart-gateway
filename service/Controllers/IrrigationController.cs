@@ -23,6 +23,10 @@ public sealed class IrrigationController(IrrigationService service) : Controller
     public async Task<double> GetIrrigate(CancellationToken cancellationToken) =>
         (await service.CalculateAsync(cancellationToken)).Irrigate ? 1 : 0;
 
+    [HttpGet("data-complete")]
+    public async Task<double> GetDataComplete(CancellationToken cancellationToken) =>
+        (await service.CalculateAsync(cancellationToken)).LocalDataComplete ? 1 : 0;
+
     [HttpGet("et0")]
     public async Task<double> GetEt0(CancellationToken cancellationToken) =>
         (await service.CalculateAsync(cancellationToken)).Et0Observed24hMm;
