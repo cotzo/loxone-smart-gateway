@@ -9,14 +9,15 @@ public sealed class OpenMeteoForecastClient(HttpClient httpClient, IConfiguratio
 
     public async Task<ForecastSummary> GetForecastAsync(CancellationToken cancellationToken)
     {
+        var hours = Math.Clamp(_options.ForecastHours, 1, 168);
         var url = $"v1/forecast?latitude={_options.Latitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}" +
                   $"&longitude={_options.Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}" +
-                  "&hourly=precipitation,et0_fao_evapotranspiration&forecast_days=2&timezone=auto";
+                  $"&hourly=precipitation,et0_fao_evapotranspiration&forecast_hours={hours}&timezone=auto";
 
         var response = await httpClient.GetFromJsonAsync<OpenMeteoResponse>(url, cancellationToken)
                        ?? throw new ApplicationException("Open-Meteo returned an empty response");
 
-        var count = Math.Min(_options.ForecastHours, Math.Min(response.Hourly.Precipitation.Count, response.Hourly.Et0.Count));
+        var count = Math.Min(hours, Math.Min(response.Hourly.Precipitation.Count, response.Hourly.Et0.Count));
         return new ForecastSummary(
             response.Hourly.Precipitation.Take(count).Sum(),
             response.Hourly.Et0.Take(count).Sum());
