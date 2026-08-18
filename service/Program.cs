@@ -1,3 +1,4 @@
+using loxone.smart.gateway.Api.Irrigation;
 using loxone.smart.gateway.Api.PhilipsHue;
 using loxone.smart.gateway.Api.Tuya;
 using OpenTelemetry.Metrics;
@@ -38,8 +39,6 @@ builder.Host.ConfigureHostOptions((_, options) =>
 });
 
 builder.Services.AddHttpContextAccessor();
-
-// Add services to the container.
 builder.Services.AddHealthChecks();
 builder.Services.AddControllers();
 
@@ -47,8 +46,6 @@ builder.Services.AddControllers();
 builder.Services.AddHttpClient("PhilipsHue")
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
-        // The Hue Bridge lives at a fixed LAN address, so keep the TLS connection open and
-        // reuse it across commands instead of paying a handshake on every (usually sparse) request.
         PooledConnectionIdleTimeout = TimeSpan.FromMinutes(10),
         PooledConnectionLifetime = Timeout.InfiniteTimeSpan,
         SslOptions =
@@ -56,8 +53,6 @@ builder.Services.AddHttpClient("PhilipsHue")
             RemoteCertificateValidationCallback = (_, _, _, _) => true
         }
     })
-    // Never recycle the handler: there is no DNS to refresh for a static IP, and recycling
-    // would throw away the warm connection.
     .SetHandlerLifetime(Timeout.InfiniteTimeSpan);
 builder.Services.AddSingleton<PhilipsHueMessageSender>();
 builder.Services.AddHostedService<PhilipsHueMessageSender>(provider => provider.GetRequiredService<PhilipsHueMessageSender>());
@@ -66,9 +61,15 @@ builder.Services.AddHostedService<PhilipsHueMessageSender>(provider => provider.
 builder.Services.AddSingleton<TuyaMessageSender>();
 builder.Services.AddHostedService<TuyaMessageSender>(provider => provider.GetRequiredService<TuyaMessageSender>());
 
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// Irrigation: local WN90LP observations + Open-Meteo forecast.
+builder.Services.AddHttpClient<OpenMeteoForecastClient>(client =>
+{
+    client.BaseAddress = new Uri("https://api.open-meteo.com/");
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+builder.Services.AddSingleton<IrrigationService>();
 
+builder.Services.AddOpenApi();
 builder.Services.AddSingleton<PhilipsHueMetrics>();
 builder.Services.AddSingleton<TuyaMetrics>();
 
@@ -79,13 +80,12 @@ if (enablePrometheus)
     app.MapPrometheusScrapingEndpoint();
 }
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
 
 app.MapControllers();
-app.MapHealthChecks( "/health" );
+app.MapHealthChecks("/health");
 
 app.Run();
