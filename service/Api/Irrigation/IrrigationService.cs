@@ -10,7 +10,8 @@ public sealed class IrrigationService
     private readonly SemaphoreSlim _gate = new(1, 1);
     private IrrigationState _state;
     private ForecastSummary? _cachedForecast;
-    private DateTimeOffset _forecastExpires;
+    private DateTimeOffset _forecastRefreshAfter;
+    private DateTimeOffset _forecastValidUntil;
 
     public IrrigationService(IConfiguration configuration, OpenMeteoForecastClient forecast)
     {
@@ -24,7 +25,17 @@ public sealed class IrrigationService
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            var timestamp = observation.Timestamp ?? DateTimeOffset.Now;
+            var receivedAt = DateTimeOffset.UtcNow;
+            var timestamp = observation.Timestamp ?? receivedAt;
+            var allowedSkew = TimeSpan.FromMinutes(Math.Max(0, _options.MaximumTimestampSkewMinutes));
+            if (timestamp < receivedAt - allowedSkew || timestamp > receivedAt + allowedSkew)
+            {
+                Log.Warning(
+                    "Ignoring weather observation timestamp {timestamp}; it differs from gateway time {receivedAt} by more than {allowedSkew}",
+                    timestamp, receivedAt, allowedSkew);
+                timestamp = receivedAt;
+            }
+
             var normalized = observation with
             {
                 Timestamp = timestamp,
@@ -33,8 +44,10 @@ public sealed class IrrigationService
             };
 
             _state.Observations.Add(normalized);
-            var cutoff = timestamp.AddDays(-4);
-            _state.Observations.RemoveAll(x => (x.Timestamp ?? DateTimeOffset.MinValue) < cutoff);
+
+            // Retention is always based on gateway receive time, never on an untrusted caller timestamp.
+            var retentionCutoff = receivedAt.AddDays(-4);
+            _state.Observations.RemoveAll(x => (x.Timestamp ?? DateTimeOffset.MinValue) < retentionCutoff);
             await PersistAsync(cancellationToken);
         }
         finally
@@ -56,22 +69,34 @@ public sealed class IrrigationService
             _gate.Release();
         }
 
-        var now = DateTimeOffset.Now;
-        var last24 = observations.Where(x => x.Timestamp >= now.AddHours(-24)).OrderBy(x => x.Timestamp).ToList();
-        var last72 = observations.Where(x => x.Timestamp >= now.AddHours(-72)).OrderBy(x => x.Timestamp).ToList();
+        var now = DateTimeOffset.UtcNow;
+        observations = observations
+            .Where(x => x.Timestamp is not null && x.Timestamp <= now.AddMinutes(Math.Max(0, _options.MaximumTimestampSkewMinutes)))
+            .OrderBy(x => x.Timestamp)
+            .ToList();
 
-        var rain24 = RainDelta(last24);
-        var rain72 = RainDelta(last72);
-        var et0 = CalculateEt0(last24, _options);
+        var cutoff24 = now.AddHours(-24);
+        var cutoff72 = now.AddHours(-72);
+        var last24 = observations.Where(x => x.Timestamp >= cutoff24).ToList();
+        var rain24Window = WindowWithBaseline(observations, cutoff24);
+        var rain72Window = WindowWithBaseline(observations, cutoff72);
+
+        var rain24 = RainDelta(rain24Window);
+        var rain72 = RainDelta(rain72Window);
+        var localDataComplete = HasComplete24HourCoverage(last24, now, _options);
+        var et0 = localDataComplete ? CalculateEt0(last24, _options) : 0;
         var forecast = await GetForecastAsync(cancellationToken);
 
         // Replenish the previous 24 h atmospheric demand, credit recent measured rain,
         // and defer irrigation for forecast rain. Forecast ET0 is returned for visibility
         // but is not pre-watered: future atmospheric demand should not cause overwatering today.
+        // Automatic irrigation remains disabled until the local observation window is complete.
         var effectiveMeasuredRain = rain24 * _options.EffectiveRainFactor;
         var effectiveForecastRain = forecast.RainMm * _options.EffectiveRainFactor * _options.ForecastRainWeight;
-        var deficit = Math.Max(0, et0 - effectiveMeasuredRain - effectiveForecastRain);
-        var irrigate = deficit >= _options.MinimumIrrigationMm;
+        var deficit = localDataComplete
+            ? Math.Max(0, et0 - effectiveMeasuredRain - effectiveForecastRain)
+            : 0;
+        var irrigate = localDataComplete && deficit >= _options.MinimumIrrigationMm;
 
         var zones = _options.Zones.Select(zone =>
         {
@@ -84,6 +109,7 @@ public sealed class IrrigationService
 
         return new IrrigationResult(
             irrigate,
+            localDataComplete,
             Math.Round(et0, 2),
             Math.Round(rain24, 2),
             Math.Round(rain72, 2),
@@ -96,20 +122,59 @@ public sealed class IrrigationService
 
     private async Task<ForecastSummary> GetForecastAsync(CancellationToken cancellationToken)
     {
-        if (_cachedForecast is not null && DateTimeOffset.UtcNow < _forecastExpires)
+        var now = DateTimeOffset.UtcNow;
+        if (_cachedForecast is not null && now < _forecastRefreshAfter)
             return _cachedForecast;
 
         try
         {
             _cachedForecast = await _forecast.GetForecastAsync(cancellationToken);
-            _forecastExpires = DateTimeOffset.UtcNow.AddMinutes(30);
+            _forecastRefreshAfter = now.AddMinutes(30);
+            _forecastValidUntil = now.AddHours(Math.Max(1, _options.ForecastHours));
             return _cachedForecast;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Unable to retrieve irrigation forecast; continuing without forecast adjustment");
-            return _cachedForecast ?? new ForecastSummary(0, 0);
+
+            // A cached aggregate is safe only while the forecast horizon it represents is still valid.
+            // Once that horizon has elapsed, stale forecast rain must not keep suppressing irrigation.
+            if (_cachedForecast is not null && now < _forecastValidUntil)
+                return _cachedForecast;
+
+            _cachedForecast = null;
+            _forecastRefreshAfter = DateTimeOffset.MinValue;
+            _forecastValidUntil = DateTimeOffset.MinValue;
+            return new ForecastSummary(0, 0);
         }
+    }
+
+    private static List<WeatherObservation> WindowWithBaseline(
+        IReadOnlyList<WeatherObservation> observations,
+        DateTimeOffset cutoff)
+    {
+        var window = new List<WeatherObservation>();
+        var baseline = observations.LastOrDefault(x => x.Timestamp < cutoff);
+        if (baseline is not null)
+            window.Add(baseline);
+
+        window.AddRange(observations.Where(x => x.Timestamp >= cutoff));
+        return window;
+    }
+
+    private static bool HasComplete24HourCoverage(
+        IReadOnlyList<WeatherObservation> observations,
+        DateTimeOffset now,
+        IrrigationConfiguration options)
+    {
+        if (observations.Count < 2) return false;
+
+        var edgeGap = TimeSpan.FromMinutes(Math.Max(1, options.MaximumObservationEdgeGapMinutes));
+        var cutoff = now.AddHours(-24);
+        var first = observations[0].Timestamp ?? DateTimeOffset.MaxValue;
+        var last = observations[^1].Timestamp ?? DateTimeOffset.MinValue;
+
+        return first <= cutoff + edgeGap && last >= now - edgeGap;
     }
 
     private static double RainDelta(IReadOnlyList<WeatherObservation> observations)
@@ -127,7 +192,7 @@ public sealed class IrrigationService
         return total;
     }
 
-    // Daily FAO-56 Penman-Monteith using the latest rolling 24 h of local observations.
+    // Daily FAO-56 Penman-Monteith using a complete rolling 24 h of local observations.
     private static double CalculateEt0(IReadOnlyList<WeatherObservation> o, IrrigationConfiguration options)
     {
         if (o.Count < 2) return 0;
@@ -144,14 +209,16 @@ public sealed class IrrigationService
         var wind2m = o.Average(x => x.WindSpeedKmh) / 3.6;
 
         var rs = IntegrateSolarMjM2(o, options.LuxPerWattM2);
-        var day = o[^1].Timestamp?.DayOfYear ?? DateTimeOffset.Now.DayOfYear;
+        var day = o[^1].Timestamp?.DayOfYear ?? DateTimeOffset.UtcNow.DayOfYear;
         var ra = ExtraterrestrialRadiation(options.Latitude, day);
         var rso = (0.75 + 2e-5 * options.ElevationM) * ra;
         var rns = 0.77 * rs;
         var sigma = 4.903e-9;
         var tMaxK = tMax + 273.16;
         var tMinK = tMin + 273.16;
-        var cloud = rso > 0 ? 1.35 * Math.Clamp(rs / rso, 0, 1) - 0.35 : 0;
+        var cloud = rso > 0
+            ? Math.Clamp(1.35 * Math.Clamp(rs / rso, 0, 1) - 0.35, 0, 1)
+            : 0;
         var rnl = sigma * (Math.Pow(tMaxK, 4) + Math.Pow(tMinK, 4)) / 2.0 *
                   (0.34 - 0.14 * Math.Sqrt(Math.Max(0, ea))) * cloud;
         var rn = Math.Max(0, rns - rnl);
