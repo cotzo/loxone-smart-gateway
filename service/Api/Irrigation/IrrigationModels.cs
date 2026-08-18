@@ -19,6 +19,8 @@ public sealed class IrrigationConfiguration
     public double ForecastRainWeight { get; set; } = 1.0;
     public double MinimumIrrigationMm { get; set; } = 2.0;
     public int ForecastHours { get; set; } = 24;
+    public int MaximumTimestampSkewMinutes { get; set; } = 5;
+    public int MaximumObservationEdgeGapMinutes { get; set; } = 15;
     public string StateFile { get; set; } = "data/irrigation-state.json";
     public List<IrrigationZoneConfiguration> Zones { get; set; } = [];
 }
@@ -36,6 +38,7 @@ public sealed record IrrigationZoneResult(string Id, double RequiredMm, int Runt
 
 public sealed record IrrigationResult(
     bool Irrigate,
+    bool LocalDataComplete,
     double Et0Observed24hMm,
     double Rain24hMm,
     double Rain72hMm,
