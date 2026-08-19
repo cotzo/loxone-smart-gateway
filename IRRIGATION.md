@@ -4,23 +4,24 @@ The gateway can combine local WN90LP observations with an Open-Meteo forecast an
 
 ## Loxone -> gateway weather feed
 
-Send the current weather values once per minute with one GET request:
+Loxone Virtual Output Commands expose a single analog value as `<v>`, so weather ingestion is staged one value at a time and then committed as one atomic observation.
 
-`GET /Irrigation/weather?temperatureC=18.2&humidityPct=63&pressureHpa=955.6&windSpeedKmh=8.6&lightLux=15320&rainfallMm=4.7`
+Send the six current weather values once per minute:
 
-Query parameters:
+- `GET /Irrigation/weather/temperature/<v>` — air temperature in °C
+- `GET /Irrigation/weather/humidity/<v>` — relative humidity in %
+- `GET /Irrigation/weather/pressure/<v>` — absolute pressure in hPa
+- `GET /Irrigation/weather/wind/<v>` — wind speed in km/h
+- `GET /Irrigation/weather/light/<v>` — light level in lux
+- `GET /Irrigation/weather/rainfall/<v>` — WN90LP cumulative rainfall counter in mm
 
-- `temperatureC` — air temperature in °C
-- `humidityPct` — relative humidity in %
-- `pressureHpa` — absolute pressure in hPa
-- `windSpeedKmh` — wind speed in km/h
-- `lightLux` — light level in lux
-- `rainfallMm` — WN90LP cumulative rainfall counter in mm
-- `timestamp` — optional ISO-8601 timestamp; normally omit this so gateway receive time is used
+After all six values have been sent, call:
+
+`GET /Irrigation/weather/commit`
+
+The commit creates one atomic `WeatherObservation` using the latest staged values. A commit before all six values have been provided returns HTTP 400. Non-finite values are rejected.
 
 `rainfallMm` is the WN90LP cumulative rainfall register (decimal register 364 after scaling to mm). Counter resets are handled by the gateway.
-
-If a timestamp is supplied, it is accepted only when it is within `MaximumTimestampSkewMinutes` of gateway time. Otherwise gateway receive time is used. Observation retention is always based on gateway time, so a bad caller timestamp cannot purge valid history.
 
 The gateway retains four days of observations in `Api:IrrigationConfiguration:StateFile` so rolling ET0 and rainfall calculations survive service restarts.
 
@@ -85,4 +86,4 @@ Scalar endpoints suitable for Virtual HTTP Inputs:
 
 Map the six zone runtime endpoints to the Loxone Irrigation block `Tv1` through `Tv6`, and use `/Irrigation/irrigate` to gate/trigger the automatic irrigation cycle.
 
-The weather-ingestion route is intentionally not authenticated because this gateway is designed to run only on the trusted LAN. Do not expose the irrigation endpoints directly to the public internet.
+The weather-ingestion routes are intentionally not authenticated because this gateway is designed to run only on the trusted LAN. Do not expose the irrigation endpoints directly to the public internet.
