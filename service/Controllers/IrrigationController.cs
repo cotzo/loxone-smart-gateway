@@ -7,9 +7,36 @@ namespace loxone.smart.gateway.Controllers;
 [Route("[controller]")]
 public sealed class IrrigationController(IrrigationService service) : ControllerBase
 {
-    [HttpPost("weather")]
-    public async Task<IActionResult> AddWeather([FromBody] WeatherObservation observation, CancellationToken cancellationToken)
+    [HttpGet("weather")]
+    public async Task<IActionResult> AddWeather(
+        [FromQuery] double temperatureC,
+        [FromQuery] double humidityPct,
+        [FromQuery] double pressureHpa,
+        [FromQuery] double windSpeedKmh,
+        [FromQuery] double lightLux,
+        [FromQuery] double rainfallMm,
+        [FromQuery] DateTimeOffset? timestamp,
+        CancellationToken cancellationToken)
     {
+        if (!double.IsFinite(temperatureC) ||
+            !double.IsFinite(humidityPct) ||
+            !double.IsFinite(pressureHpa) ||
+            !double.IsFinite(windSpeedKmh) ||
+            !double.IsFinite(lightLux) ||
+            !double.IsFinite(rainfallMm))
+        {
+            return BadRequest("All weather values must be finite numbers.");
+        }
+
+        var observation = new WeatherObservation(
+            temperatureC,
+            humidityPct,
+            pressureHpa,
+            windSpeedKmh,
+            lightLux,
+            rainfallMm,
+            timestamp);
+
         await service.AddObservationAsync(observation, cancellationToken);
         return Ok();
     }
