@@ -4,20 +4,19 @@ The gateway can combine local WN90LP observations with an Open-Meteo forecast an
 
 ## Loxone -> gateway weather feed
 
-Send the current weather values once per minute:
+Send the current weather values once per minute with one GET request:
 
-`POST /Irrigation/weather`
+`GET /Irrigation/weather?temperatureC=18.2&humidityPct=63&pressureHpa=955.6&windSpeedKmh=8.6&lightLux=15320&rainfallMm=4.7`
 
-```json
-{
-  "temperatureC": 18.2,
-  "humidityPct": 63,
-  "pressureHpa": 955.6,
-  "windSpeedKmh": 8.6,
-  "lightLux": 15320,
-  "rainfallMm": 4.7
-}
-```
+Query parameters:
+
+- `temperatureC` — air temperature in °C
+- `humidityPct` — relative humidity in %
+- `pressureHpa` — absolute pressure in hPa
+- `windSpeedKmh` — wind speed in km/h
+- `lightLux` — light level in lux
+- `rainfallMm` — WN90LP cumulative rainfall counter in mm
+- `timestamp` — optional ISO-8601 timestamp; normally omit this so gateway receive time is used
 
 `rainfallMm` is the WN90LP cumulative rainfall register (decimal register 364 after scaling to mm). Counter resets are handled by the gateway.
 
