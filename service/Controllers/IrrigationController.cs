@@ -5,40 +5,32 @@ namespace loxone.smart.gateway.Controllers;
 
 [ApiController]
 [Route("[controller]")]
-public sealed class IrrigationController(IrrigationService service) : ControllerBase
+public sealed class IrrigationController(
+    IrrigationService service,
+    WeatherIngestionService weatherIngestion) : ControllerBase
 {
-    [HttpGet("weather")]
-    public async Task<IActionResult> AddWeather(
-        [FromQuery] double temperatureC,
-        [FromQuery] double humidityPct,
-        [FromQuery] double pressureHpa,
-        [FromQuery] double windSpeedKmh,
-        [FromQuery] double lightLux,
-        [FromQuery] double rainfallMm,
-        [FromQuery] DateTimeOffset? timestamp,
+    [HttpGet("weather/{field}/{value:double}")]
+    public async Task<IActionResult> SetWeatherValue(
+        string field,
+        double value,
         CancellationToken cancellationToken)
     {
-        if (!double.IsFinite(temperatureC) ||
-            !double.IsFinite(humidityPct) ||
-            !double.IsFinite(pressureHpa) ||
-            !double.IsFinite(windSpeedKmh) ||
-            !double.IsFinite(lightLux) ||
-            !double.IsFinite(rainfallMm))
-        {
-            return BadRequest("All weather values must be finite numbers.");
-        }
+        if (!double.IsFinite(value))
+            return BadRequest("Weather value must be a finite number.");
 
-        var observation = new WeatherObservation(
-            temperatureC,
-            humidityPct,
-            pressureHpa,
-            windSpeedKmh,
-            lightLux,
-            rainfallMm,
-            timestamp);
+        var updated = await weatherIngestion.SetAsync(field, value, cancellationToken);
+        return updated
+            ? Ok()
+            : BadRequest("Unknown weather field. Use temperature, humidity, pressure, wind, light, or rainfall.");
+    }
 
-        await service.AddObservationAsync(observation, cancellationToken);
-        return Ok();
+    [HttpGet("weather/commit")]
+    public async Task<IActionResult> CommitWeather(CancellationToken cancellationToken)
+    {
+        var committed = await weatherIngestion.CommitAsync(cancellationToken);
+        return committed
+            ? Ok()
+            : BadRequest("Weather sample is incomplete. Set all six weather values before commit.");
     }
 
     [HttpGet]
