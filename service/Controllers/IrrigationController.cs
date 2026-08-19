@@ -18,6 +18,16 @@ public sealed class IrrigationController(IrrigationService service) : Controller
         [FromQuery] DateTimeOffset? timestamp,
         CancellationToken cancellationToken)
     {
+        if (!double.IsFinite(temperatureC) ||
+            !double.IsFinite(humidityPct) ||
+            !double.IsFinite(pressureHpa) ||
+            !double.IsFinite(windSpeedKmh) ||
+            !double.IsFinite(lightLux) ||
+            !double.IsFinite(rainfallMm))
+        {
+            return BadRequest("All weather values must be finite numbers.");
+        }
+
         var observation = new WeatherObservation(
             temperatureC,
             humidityPct,
