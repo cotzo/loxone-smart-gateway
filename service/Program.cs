@@ -68,6 +68,7 @@ builder.Services.AddHttpClient<OpenMeteoForecastClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 builder.Services.AddSingleton<IrrigationService>();
+builder.Services.AddSingleton<WeatherIngestionService>();
 
 builder.Services.AddOpenApi();
 builder.Services.AddSingleton<PhilipsHueMetrics>();
