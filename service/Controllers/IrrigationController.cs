@@ -51,8 +51,13 @@ public sealed class IrrigationController(
     }
 
     [HttpGet("zone/{id}/start")]
-    public IActionResult StartRun(string id, [FromQuery] string type = "Irrigation") =>
-        runTracker.Start(id, type) ? Ok() : BadRequest("Type must be Irrigation, Rinse, or Manual.");
+    public async Task<IActionResult> StartRun(
+        string id,
+        [FromQuery] string type = "Irrigation",
+        CancellationToken cancellationToken = default) =>
+        await runTracker.StartAsync(id, type, cancellationToken)
+            ? Ok()
+            : BadRequest("Type must be Irrigation, Rinse, or Manual.");
 
     [HttpGet("zone/{id}/stop")]
     public async Task<IActionResult> StopRun(string id, CancellationToken cancellationToken) =>
