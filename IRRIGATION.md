@@ -51,13 +51,39 @@ The runtime for a shared group is calculated from the sum of the member valves' 
 
 For V1/V4, the measured combined effective rate was about 23.3 mm/h, therefore each physical circuit should be configured at about `11.65 mm/h`, not 23.3 mm/h. V6 remains about `25.4 mm/h`.
 
+## Required Loxone irrigation flow
+
+Reading a zone runtime does **not** consume or reset its soil-water balance. Loxone must report each completed main-irrigation valve run back to the gateway. Without this callback the gateway has no way to know that water was actually applied and will continue recommending irrigation for the outstanding deficit.
+
+The intended automatic flow is:
+
+1. Loxone polls `GET /Irrigation/irrigate` and the zone runtime endpoints such as `GET /Irrigation/zone/V1`.
+2. When the scheduled main irrigation window starts, Loxone runs each required valve for the runtime it actually uses. A zero runtime means that valve is skipped.
+3. After each valve finishes, Loxone immediately reports the **actual elapsed runtime**, not merely the originally requested runtime, using:
+
+   `GET /Irrigation/zone/{id}/applied/{runtimeSeconds}/{eventId}?type=Irrigation`
+
+4. `eventId` must uniquely identify that physical valve run and must remain identical if Loxone retries the HTTP request. A practical format is `yyyyMMdd-HHmm-{zone}`, for example:
+
+   `GET /Irrigation/zone/V6/applied/708/20260821-0500-V6?type=Irrigation`
+
+5. Only a successful main irrigation run should be reported as `type=Irrigation`. If a valve did not actually open/run, do not report it as applied water.
+
+For shared balance groups such as V1/V4, report **both physical valve runs independently** after they complete. Each callback subtracts the water physically delivered by that valve from the shared `LawnEast` balance. For example, if both valves actually run 600 seconds:
+
+`GET /Irrigation/zone/V1/applied/600/20260821-0500-V1?type=Irrigation`
+
+`GET /Irrigation/zone/V4/applied/600/20260821-0510-V4?type=Irrigation`
+
+The event ID makes reporting idempotent. Retrying either exact event does not subtract water twice and does not create duplicate history.
+
+Short dog-rinse cycles may optionally be recorded without changing the soil-water balance:
+
+`GET /Irrigation/zone/V6/applied/90/20260821-2230-V6?type=Rinse`
+
+Manual runs can likewise use `type=Manual`. Only `type=Irrigation` modifies the persistent soil-water balance.
+
 ## Irrigation feedback and history
-
-After a valve actually runs, Loxone reports it using a unique event ID:
-
-`GET /Irrigation/zone/{id}/applied/{runtimeSeconds}/{eventId}?type=Irrigation`
-
-The event ID makes reporting idempotent. Retrying the same request does not subtract water twice and does not create duplicate history.
 
 Supported run types are:
 
@@ -73,6 +99,8 @@ Each history record contains event ID, zone, balance group, type, runtime, appli
 
 `MaximumDeficitMm` bounds stored soil depletion. `MaximumZoneRuntimeSeconds` caps any single recommended valve runtime. The defaults are 15 mm and 1800 seconds respectively.
 
+If a recommended runtime is capped, only the water represented by the runtime that actually executes is removed when Loxone sends the callback. Any remaining deficit stays in the persistent balance and can be irrigated during a later run.
+
 The gateway intentionally does not implement cycle-and-soak scheduling; Loxone remains responsible for how a recommended runtime is physically scheduled.
 
 ## Loxone-friendly outputs
@@ -86,6 +114,7 @@ The gateway intentionally does not implement cycle-and-soak scheduling; Loxone r
 - `GET /Irrigation/forecast-rain` — forecast rain
 - `GET /Irrigation/deficit` — maximum stored balance deficit
 - `GET /Irrigation/zone/V1` through `/V6` — recommended runtime seconds
+- `GET /Irrigation/history` — newest-first 30-day irrigation/run history
 
 ## Environment configuration
 
@@ -109,6 +138,15 @@ Api__IrrigationConfiguration__MaximumObservationEdgeGapMinutes=15
 Api__IrrigationConfiguration__CompletedDayEdgeGapMinutes=30
 Api__IrrigationConfiguration__TimeZoneId=Europe/Bucharest
 Api__IrrigationConfiguration__StateFile=/data/irrigation-state.json
+```
+
+For V1/V4 specifically:
+
+```text
+Api__IrrigationConfiguration__Zones__0__BalanceGroup=LawnEast
+Api__IrrigationConfiguration__Zones__0__ApplicationRateMmPerHour=11.65
+Api__IrrigationConfiguration__Zones__3__BalanceGroup=LawnEast
+Api__IrrigationConfiguration__Zones__3__ApplicationRateMmPerHour=11.65
 ```
 
 The weather-ingestion and irrigation routes are intentionally unauthenticated because the gateway is designed for the trusted LAN only. Do not expose them directly to the public internet.
