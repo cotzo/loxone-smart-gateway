@@ -5,39 +5,26 @@ namespace loxone.smart.gateway.Controllers;
 
 [ApiController]
 [Route("[controller]")]
-public sealed class IrrigationController(
-    IrrigationService service,
-    WeatherIngestionService weatherIngestion) : ControllerBase
+public sealed class IrrigationController(IrrigationService service, WeatherIngestionService weatherIngestion) : ControllerBase
 {
     [HttpGet("weather/{field}/{value:double}")]
-    public async Task<IActionResult> SetWeatherValue(
-        string field,
-        double value,
-        CancellationToken cancellationToken)
+    public async Task<IActionResult> SetWeatherValue(string field, double value, CancellationToken cancellationToken)
     {
-        if (!double.IsFinite(value))
-            return BadRequest("Weather value must be a finite number.");
-
+        if (!double.IsFinite(value)) return BadRequest("Weather value must be a finite number.");
         var updated = await weatherIngestion.SetAsync(field, value, cancellationToken);
-        return updated
-            ? Ok()
-            : BadRequest("Unknown weather field. Use temperature, humidity, pressure, wind, light, or rainfall.");
+        return updated ? Ok() : BadRequest("Unknown weather field. Use temperature, humidity, pressure, wind, light, or rainfall.");
     }
 
     [HttpGet("weather/commit")]
     public async Task<IActionResult> CommitWeather(CancellationToken cancellationToken)
     {
         var committed = await weatherIngestion.CommitAsync(cancellationToken);
-        return committed
-            ? Ok()
-            : BadRequest("Weather sample is incomplete. Set all six weather values before commit.");
+        return committed ? Ok() : BadRequest("Weather sample is incomplete. Set all six weather values before commit.");
     }
 
     [HttpGet]
-    public Task<IrrigationResult> Get(CancellationToken cancellationToken) =>
-        service.CalculateAsync(cancellationToken);
+    public Task<IrrigationResult> Get(CancellationToken cancellationToken) => service.CalculateAsync(cancellationToken);
 
-    // Simple scalar endpoints are intentionally provided for Loxone Virtual HTTP Inputs.
     [HttpGet("irrigate")]
     public async Task<double> GetIrrigate(CancellationToken cancellationToken) =>
         (await service.CalculateAsync(cancellationToken)).Irrigate ? 1 : 0;
@@ -73,4 +60,24 @@ public sealed class IrrigationController(
         var zone = result.Zones.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
         return zone is null ? NotFound() : Ok(zone.RuntimeSeconds);
     }
+
+    // eventId must be unique for each physical valve run. Repeating the same request is safe:
+    // the gateway will not subtract the same delivered water twice.
+    [HttpGet("zone/{id}/applied/{runtimeSeconds:int}/{eventId}")]
+    public async Task<IActionResult> RecordAppliedWater(
+        string id,
+        int runtimeSeconds,
+        string eventId,
+        [FromQuery] string type = "Irrigation",
+        CancellationToken cancellationToken = default)
+    {
+        var recorded = await service.RecordIrrigationAsync(id, runtimeSeconds, eventId, type, cancellationToken);
+        return recorded
+            ? Ok()
+            : BadRequest("Unknown zone, invalid application rate/runtime/event id, or type must be Irrigation, Rinse, or Manual.");
+    }
+
+    [HttpGet("history")]
+    public Task<IReadOnlyList<IrrigationRun>> GetHistory(CancellationToken cancellationToken) =>
+        service.GetIrrigationRunsAsync(cancellationToken);
 }
