@@ -3,6 +3,9 @@ WORKDIR /app
 EXPOSE 8080
 EXPOSE 8081
 
+# TimeZoneInfo on Alpine needs the IANA zone database for IDs such as Europe/Bucharest.
+RUN apk add --no-cache tzdata
+
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
 ARG BUILD_CONFIGURATION=Release
 ARG TARGETARCH
