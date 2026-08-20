@@ -36,6 +36,7 @@ public sealed class IrrigationZoneConfiguration
 }
 
 public sealed record IrrigationZoneResult(string Id, double RequiredMm, int RuntimeSeconds);
+public sealed record IrrigationRun(string ZoneId, int RuntimeSeconds, double AppliedMm, DateTimeOffset Timestamp);
 
 public sealed record IrrigationResult(
     bool Irrigate,
@@ -54,4 +55,5 @@ internal sealed class IrrigationState
     public List<WeatherObservation> Observations { get; set; } = [];
     public Dictionary<string, double> ZoneDeficitMm { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public DateOnly? LastBalancedLocalDate { get; set; }
+    public List<IrrigationRun> IrrigationRuns { get; set; } = [];
 }
