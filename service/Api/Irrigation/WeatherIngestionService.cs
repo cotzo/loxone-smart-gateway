@@ -1,9 +1,20 @@
+using System.Text.Json;
+using Serilog;
+
 namespace loxone.smart.gateway.Api.Irrigation;
 
-public sealed class WeatherIngestionService(IrrigationService irrigationService)
+public sealed class WeatherIngestionService
 {
+    private readonly IrrigationService _irrigationService;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly PendingWeather _pending = new();
+
+    public WeatherIngestionService(IrrigationService irrigationService, IConfiguration configuration)
+    {
+        _irrigationService = irrigationService;
+        var options = configuration.GetSection("Api:IrrigationConfiguration").Get<IrrigationConfiguration>() ?? new();
+        HydratePending(options.StateFile);
+    }
 
     public async Task<bool> SetAsync(string field, double value, CancellationToken cancellationToken)
     {
@@ -67,8 +78,39 @@ public sealed class WeatherIngestionService(IrrigationService irrigationService)
             _gate.Release();
         }
 
-        await irrigationService.AddObservationAsync(observation, cancellationToken);
+        await _irrigationService.AddObservationAsync(observation, cancellationToken);
         return true;
+    }
+
+    private void HydratePending(string stateFile)
+    {
+        try
+        {
+            if (!File.Exists(stateFile))
+                return;
+
+            var state = JsonSerializer.Deserialize<IrrigationState>(File.ReadAllText(stateFile));
+            var latest = state?.Observations
+                .Where(x => x.Timestamp is not null)
+                .OrderByDescending(x => x.Timestamp)
+                .FirstOrDefault();
+
+            if (latest is null)
+                return;
+
+            _pending.TemperatureC = latest.TemperatureC;
+            _pending.HumidityPct = latest.HumidityPct;
+            _pending.PressureHpa = latest.PressureHpa;
+            _pending.WindSpeedKmh = latest.WindSpeedKmh;
+            _pending.LightLux = latest.LightLux;
+            _pending.RainfallMm = latest.RainfallMm;
+
+            Log.Information("Hydrated staged irrigation weather values from persisted observation at {timestamp}", latest.Timestamp);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Unable to hydrate staged irrigation weather values from {file}", stateFile);
+        }
     }
 
     private sealed class PendingWeather
