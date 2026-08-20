@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using loxone.smart.gateway.Api.Irrigation;
 using Microsoft.Extensions.Configuration;
+using Xunit;
 
 namespace service.tests;
 
