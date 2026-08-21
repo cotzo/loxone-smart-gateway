@@ -27,6 +27,10 @@ public sealed class MowingWetnessService
             .Select(x => x.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        var latestObservation = observations.LastOrDefault()?.Timestamp;
+        var weatherDataFresh = latestObservation is not null &&
+                               latestObservation >= now.AddMinutes(-Math.Max(1, _options.MowingMaximumWeatherAgeMinutes));
+
         var lookback = TimeSpan.FromHours(Math.Max(6, _options.MowingWetnessLookbackHours));
         var cutoff = now - lookback;
         var baseline = observations.LastOrDefault(x => x.Timestamp < cutoff);
@@ -49,12 +53,13 @@ public sealed class MowingWetnessService
 
         var irrigationRunning = await _runTracker.IsAnyZoneActiveAsync(lawnZoneIds, cancellationToken);
         var threshold = Math.Max(0, _options.MowingAllowedWetnessMm);
-        var allowed = wetnessMm <= threshold && !rainingNow && !irrigationRunning && !heavyRainLockout;
+        var allowed = weatherDataFresh && wetnessMm <= threshold && !rainingNow && !irrigationRunning && !heavyRainLockout;
 
         return new MowingStatus(
             allowed,
             Math.Round(wetnessMm, 2),
             Math.Round(threshold, 2),
+            weatherDataFresh,
             rainingNow,
             irrigationRunning,
             heavyRainLockout,
@@ -91,9 +96,12 @@ public sealed class MowingWetnessService
             if (intervalHours <= maxGapHours)
                 surfaceMm = Math.Max(0, surfaceMm - EstimateDryingMm(previous, current, intervalHours, options));
 
+            // The WN90LP rainfall value is cumulative. Counter resets are treated as a new counter.
             var rainDelta = current.RainfallMm - previous.RainfallMm;
             surfaceMm += rainDelta >= 0 ? rainDelta : Math.Max(0, current.RainfallMm);
 
+            // Add completed physical lawn runs after drying the interval. This is deliberately
+            // conservative: freshly applied water is not assumed to have dried before its end time.
             while (runIndex < orderedRuns.Count && orderedRuns[runIndex].EndedAt <= end)
             {
                 if (orderedRuns[runIndex].EndedAt > start)
@@ -169,8 +177,6 @@ public sealed class MowingWetnessService
         }
         catch
         {
-            // If the state cannot be read, fail conservatively: an empty state produces no false
-            // rain history, while active irrigation still blocks mowing through the run tracker.
             return new IrrigationState();
         }
     }
