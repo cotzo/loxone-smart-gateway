@@ -16,16 +16,20 @@ public sealed class MowingWetnessService
     public async Task<MowingStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
+        var lawnZoneIds = _options.Zones
+            .Where(x => string.Equals(x.Type, "Lawn", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Check the tracker first. If a stop is currently being finalized this waits behind the
+        // tracker's gate. Only after that transition is complete do we read persisted run history,
+        // so the snapshot cannot miss both the active run and its completed history record.
+        var irrigationRunning = await _runTracker.IsAnyZoneActiveAsync(lawnZoneIds, cancellationToken);
         var state = LoadState();
         var observations = state.Observations
             .Where(x => x.Timestamp is not null)
             .OrderBy(x => x.Timestamp)
             .ToList();
-
-        var lawnZoneIds = _options.Zones
-            .Where(x => string.Equals(x.Type, "Lawn", StringComparison.OrdinalIgnoreCase))
-            .Select(x => x.Id)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var lookback = TimeSpan.FromHours(Math.Max(6, _options.MowingWetnessLookbackHours));
         var cutoff = now - lookback;
@@ -50,13 +54,9 @@ public sealed class MowingWetnessService
         var latest = observations.LastOrDefault()?.Timestamp;
         var weatherFresh = latest is not null &&
                            latest >= now.AddMinutes(-Math.Max(1, _options.MowingMaximumWeatherAgeMinutes));
-
-        // A single fresh sample is not enough: the cumulative rain counter needs a previous sample
-        // to establish a delta, and the surface model needs an interval before it can infer drying.
         var historyReady = HasSufficientWeatherHistory(observations, now, _options);
         var weatherDataFresh = weatherFresh && historyReady;
 
-        var irrigationRunning = await _runTracker.IsAnyZoneActiveAsync(lawnZoneIds, cancellationToken);
         var threshold = Math.Max(0, _options.MowingAllowedWetnessMm);
         var allowed = weatherDataFresh && wetnessMm <= threshold && !rainingNow && !irrigationRunning && !heavyRainLockout;
 
@@ -72,48 +72,22 @@ public sealed class MowingWetnessService
             now);
     }
 
-    internal static bool HasSufficientWeatherHistory(
-        IReadOnlyList<WeatherObservation> observations,
-        DateTimeOffset now,
-        IrrigationConfiguration options)
+    internal static bool HasSufficientWeatherHistory(IReadOnlyList<WeatherObservation> observations, DateTimeOffset now, IrrigationConfiguration options)
     {
         if (observations.Count < 2) return false;
         var latest = observations[^1].Timestamp;
         if (latest is null || latest < now.AddMinutes(-Math.Max(1, options.MowingMaximumWeatherAgeMinutes))) return false;
-
-        // Require at least one genuine interval. This prevents a state reset followed by two
-        // near-simultaneous samples from immediately declaring the lawn safe.
         var previous = observations.Take(observations.Count - 1).LastOrDefault(x => x.Timestamp is not null);
         return previous?.Timestamp is not null && latest.Value > previous.Timestamp.Value;
     }
 
-    internal static double CalculateSurfaceWetnessMm(
-        IReadOnlyList<WeatherObservation> observations,
-        IReadOnlyList<IrrigationRun> lawnRuns,
-        DateTimeOffset cutoff,
-        DateTimeOffset now,
-        IrrigationConfiguration options)
+    internal static double CalculateSurfaceWetnessMm(IReadOnlyList<WeatherObservation> observations, IReadOnlyList<IrrigationRun> lawnRuns, DateTimeOffset cutoff, DateTimeOffset now, IrrigationConfiguration options)
     {
-        var orderedRuns = lawnRuns
-            .Where(x => x.EndedAt >= cutoff && x.EndedAt <= now)
-            .OrderBy(x => x.EndedAt)
-            .ToList();
+        var orderedRuns = lawnRuns.Where(x => x.EndedAt >= cutoff && x.EndedAt <= now).OrderBy(x => x.EndedAt).ToList();
+        if (observations.Count == 0) return orderedRuns.Sum(x => Math.Max(0, x.AppliedMm));
 
-        if (observations.Count == 0)
-            return orderedRuns.Sum(x => Math.Max(0, x.AppliedMm));
-
-        var firstObservationTime = observations
-            .Where(x => x.Timestamp is not null)
-            .Select(x => x.Timestamp!.Value)
-            .DefaultIfEmpty(now)
-            .Min();
-
-        // Irrigation may have happened after the replay cutoff but before weather observations
-        // resumed. Seed the reservoir with those runs so a weather-history outage cannot erase
-        // known physical watering.
-        var surfaceMm = orderedRuns
-            .Where(x => x.EndedAt < firstObservationTime)
-            .Sum(x => Math.Max(0, x.AppliedMm));
+        var firstObservationTime = observations.Where(x => x.Timestamp is not null).Select(x => x.Timestamp!.Value).DefaultIfEmpty(now).Min();
+        var surfaceMm = orderedRuns.Where(x => x.EndedAt < firstObservationTime).Sum(x => Math.Max(0, x.AppliedMm));
         var runIndex = orderedRuns.FindIndex(x => x.EndedAt >= firstObservationTime);
         if (runIndex < 0) runIndex = orderedRuns.Count;
 
@@ -122,23 +96,17 @@ public sealed class MowingWetnessService
             var previous = observations[i - 1];
             var current = observations[i];
             if (previous.Timestamp is null || current.Timestamp is null) continue;
-
             var start = previous.Timestamp.Value < cutoff ? cutoff : previous.Timestamp.Value;
             var end = current.Timestamp.Value > now ? now : current.Timestamp.Value;
             if (end <= start) continue;
-
             var intervalHours = (end - start).TotalHours;
             var maxGapHours = Math.Max(1, options.MowingMaximumDryingGapMinutes) / 60.0;
-            if (intervalHours <= maxGapHours)
-                surfaceMm = Math.Max(0, surfaceMm - EstimateDryingMm(previous, current, intervalHours, options));
-
+            if (intervalHours <= maxGapHours) surfaceMm = Math.Max(0, surfaceMm - EstimateDryingMm(previous, current, intervalHours, options));
             var rainDelta = current.RainfallMm - previous.RainfallMm;
             surfaceMm += rainDelta >= 0 ? rainDelta : Math.Max(0, current.RainfallMm);
-
             while (runIndex < orderedRuns.Count && orderedRuns[runIndex].EndedAt <= end)
             {
-                if (orderedRuns[runIndex].EndedAt > start)
-                    surfaceMm += Math.Max(0, orderedRuns[runIndex].AppliedMm);
+                if (orderedRuns[runIndex].EndedAt > start) surfaceMm += Math.Max(0, orderedRuns[runIndex].AppliedMm);
                 runIndex++;
             }
         }
@@ -146,42 +114,26 @@ public sealed class MowingWetnessService
         var lastObservationTime = observations[^1].Timestamp ?? cutoff;
         while (runIndex < orderedRuns.Count)
         {
-            if (orderedRuns[runIndex].EndedAt > lastObservationTime && orderedRuns[runIndex].EndedAt <= now)
-                surfaceMm += Math.Max(0, orderedRuns[runIndex].AppliedMm);
+            if (orderedRuns[runIndex].EndedAt > lastObservationTime && orderedRuns[runIndex].EndedAt <= now) surfaceMm += Math.Max(0, orderedRuns[runIndex].AppliedMm);
             runIndex++;
         }
-
         return Math.Max(0, surfaceMm);
     }
 
-    internal static double EstimateDryingMm(
-        WeatherObservation first,
-        WeatherObservation second,
-        double hours,
-        IrrigationConfiguration options)
+    internal static double EstimateDryingMm(WeatherObservation first, WeatherObservation second, double hours, IrrigationConfiguration options)
     {
         if (hours <= 0) return 0;
-
         var temperature = (first.TemperatureC + second.TemperatureC) / 2.0;
         var humidity = Math.Clamp((first.HumidityPct + second.HumidityPct) / 2.0, 0, 100);
         var wind = Math.Max(0, (first.WindSpeedKmh + second.WindSpeedKmh) / 2.0);
         var lux = Math.Max(0, (first.LightLux + second.LightLux) / 2.0);
         var solarWm2 = options.LuxPerWattM2 > 0 ? lux / options.LuxPerWattM2 : 0;
-
-        var rateMmPerHour = 0.01
-                            + solarWm2 * 0.00018
-                            + Math.Max(0, temperature - 10) * 0.006
-                            + wind * 0.008
-                            + Math.Max(0, 70 - humidity) * 0.004;
-
+        var rateMmPerHour = 0.01 + solarWm2 * 0.00018 + Math.Max(0, temperature - 10) * 0.006 + wind * 0.008 + Math.Max(0, 70 - humidity) * 0.004;
         rateMmPerHour = Math.Clamp(rateMmPerHour * Math.Max(0, options.MowingDryingFactor), 0, 0.6);
         return rateMmPerHour * hours;
     }
 
-    internal static double RainForPeriod(
-        IReadOnlyList<WeatherObservation> orderedObservations,
-        DateTimeOffset start,
-        DateTimeOffset end)
+    internal static double RainForPeriod(IReadOnlyList<WeatherObservation> orderedObservations, DateTimeOffset start, DateTimeOffset end)
     {
         if (orderedObservations.Count < 2 || end <= start) return 0;
         var window = new List<WeatherObservation>();
@@ -189,7 +141,6 @@ public sealed class MowingWetnessService
         if (baseline is not null) window.Add(baseline);
         window.AddRange(orderedObservations.Where(x => x.Timestamp >= start && x.Timestamp <= end));
         if (window.Count < 2) return 0;
-
         double total = 0;
         for (var i = 1; i < window.Count; i++)
         {
@@ -206,9 +157,6 @@ public sealed class MowingWetnessService
             if (!File.Exists(_options.StateFile)) return new IrrigationState();
             return JsonSerializer.Deserialize<IrrigationState>(File.ReadAllText(_options.StateFile)) ?? new IrrigationState();
         }
-        catch
-        {
-            return new IrrigationState();
-        }
+        catch { return new IrrigationState(); }
     }
 }
