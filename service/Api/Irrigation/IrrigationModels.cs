@@ -35,6 +35,7 @@ public sealed class IrrigationConfiguration
     public double MowingHeavyRainThresholdMm { get; set; } = 10.0;
     public int MowingHeavyRainLockoutHours { get; set; } = 12;
     public int MowingMaximumDryingGapMinutes { get; set; } = 30;
+    public int MowingMaximumWeatherAgeMinutes { get; set; } = 10;
     public double MowingDryingFactor { get; set; } = 1.0;
 
     public List<IrrigationZoneConfiguration> Zones { get; set; } = [];
@@ -66,6 +67,7 @@ public sealed record MowingStatus(
     bool MowingAllowed,
     double LawnWetnessMm,
     double AllowedThresholdMm,
+    bool WeatherDataFresh,
     bool RainingNow,
     bool LawnIrrigationRunning,
     bool HeavyRainLockout,
