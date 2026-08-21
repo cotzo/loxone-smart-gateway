@@ -26,6 +26,17 @@ public sealed class IrrigationConfiguration
     public int CompletedDayEdgeGapMinutes { get; set; } = 30;
     public string TimeZoneId { get; set; } = "Europe/Bucharest";
     public string StateFile { get; set; } = "data/irrigation-state.json";
+
+    // Surface wetness / mower protection. This is intentionally separate from the root-zone
+    // irrigation deficit: the mower cares about traction and soft surface soil on slopes.
+    public double MowingAllowedWetnessMm { get; set; } = 1.0;
+    public int MowingWetnessLookbackHours { get; set; } = 48;
+    public int MowingRainingNowMinutes { get; set; } = 15;
+    public double MowingHeavyRainThresholdMm { get; set; } = 10.0;
+    public int MowingHeavyRainLockoutHours { get; set; } = 12;
+    public int MowingMaximumDryingGapMinutes { get; set; } = 30;
+    public double MowingDryingFactor { get; set; } = 1.0;
+
     public List<IrrigationZoneConfiguration> Zones { get; set; } = [];
 }
 
@@ -50,6 +61,16 @@ public sealed record IrrigationRun(
     double AppliedMm,
     DateTimeOffset StartedAt,
     DateTimeOffset EndedAt);
+
+public sealed record MowingStatus(
+    bool MowingAllowed,
+    double LawnWetnessMm,
+    double AllowedThresholdMm,
+    bool RainingNow,
+    bool LawnIrrigationRunning,
+    bool HeavyRainLockout,
+    double RainDuringLockoutWindowMm,
+    DateTimeOffset CalculatedAt);
 
 public sealed record IrrigationResult(
     bool Irrigate,
