@@ -69,6 +69,19 @@ public sealed class IrrigationRunTracker
         }
     }
 
+    public async Task<bool> IsAnyZoneActiveAsync(IReadOnlySet<string> zoneIds, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            return _active.Keys.Any(zoneIds.Contains);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private Dictionary<string, ActiveRun> LoadActiveRuns()
     {
         try
