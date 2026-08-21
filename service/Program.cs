@@ -53,6 +53,7 @@ builder.Services.AddHttpClient<OpenMeteoForecastClient>(client =>
 builder.Services.AddSingleton<IrrigationService>();
 builder.Services.AddSingleton<WeatherIngestionService>();
 builder.Services.AddSingleton<IrrigationRunTracker>();
+builder.Services.AddSingleton<MowingWetnessService>();
 
 builder.Services.AddOpenApi();
 builder.Services.AddSingleton<PhilipsHueMetrics>();

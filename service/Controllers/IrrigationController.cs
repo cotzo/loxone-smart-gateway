@@ -8,7 +8,8 @@ namespace loxone.smart.gateway.Controllers;
 public sealed class IrrigationController(
     IrrigationService service,
     WeatherIngestionService weatherIngestion,
-    IrrigationRunTracker runTracker) : ControllerBase
+    IrrigationRunTracker runTracker,
+    MowingWetnessService mowingWetness) : ControllerBase
 {
     [HttpGet("weather/{field}/{value:double}")]
     public async Task<IActionResult> SetWeatherValue(string field, double value, CancellationToken cancellationToken)
@@ -41,6 +42,18 @@ public sealed class IrrigationController(
     public async Task<double> GetForecastRain(CancellationToken cancellationToken) => (await service.CalculateAsync(cancellationToken)).ForecastRainMm;
     [HttpGet("deficit")]
     public async Task<double> GetDeficit(CancellationToken cancellationToken) => (await service.CalculateAsync(cancellationToken)).WaterDeficitMm;
+
+    [HttpGet("mowing")]
+    public Task<MowingStatus> GetMowingStatus(CancellationToken cancellationToken) =>
+        mowingWetness.GetStatusAsync(cancellationToken);
+
+    [HttpGet("mowing-allowed")]
+    public async Task<double> GetMowingAllowed(CancellationToken cancellationToken) =>
+        (await mowingWetness.GetStatusAsync(cancellationToken)).MowingAllowed ? 1 : 0;
+
+    [HttpGet("lawn-wetness")]
+    public async Task<double> GetLawnWetness(CancellationToken cancellationToken) =>
+        (await mowingWetness.GetStatusAsync(cancellationToken)).LawnWetnessMm;
 
     [HttpGet("zone/{id}")]
     public async Task<ActionResult<int>> GetZoneRuntime(string id, CancellationToken cancellationToken)
