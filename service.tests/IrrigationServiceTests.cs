@@ -1,7 +1,9 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using loxone.smart.gateway.Api.Gateway;
 using loxone.smart.gateway.Api.Irrigation;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Xunit;
 
@@ -84,7 +86,7 @@ public sealed class IrrigationServiceTests
         }
         finally
         {
-            File.Delete(stateFile);
+            Directory.Delete(Path.GetDirectoryName(stateFile)!, recursive: true);
         }
     }
 
@@ -107,7 +109,7 @@ public sealed class IrrigationServiceTests
         }
         finally
         {
-            File.Delete(stateFile);
+            Directory.Delete(Path.GetDirectoryName(stateFile)!, recursive: true);
         }
     }
 
@@ -140,7 +142,7 @@ public sealed class IrrigationServiceTests
         }
         finally
         {
-            File.Delete(stateFile);
+            Directory.Delete(Path.GetDirectoryName(stateFile)!, recursive: true);
         }
     }
 
@@ -164,7 +166,7 @@ public sealed class IrrigationServiceTests
         }
         finally
         {
-            File.Delete(stateFile);
+            Directory.Delete(Path.GetDirectoryName(stateFile)!, recursive: true);
         }
     }
 
@@ -173,7 +175,9 @@ public sealed class IrrigationServiceTests
 
     private static string TempState(string json)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"irrigation-{Guid.NewGuid():N}.json");
+        var directory = Path.Combine(Path.GetTempPath(), $"irrigation-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "irrigation-state.json");
         File.WriteAllText(path, json);
         return path;
     }
@@ -189,8 +193,21 @@ public sealed class IrrigationServiceTests
             ["Api:IrrigationConfiguration:ForecastRainWeight"] = "0.75"
         };
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+        var irrigation = new IrrigationConfiguration();
+        configuration.GetSection("Api:IrrigationConfiguration").Bind(irrigation);
+        irrigation.StateFile = stateFile;
+
+        var dataDirectory = Path.GetDirectoryName(stateFile)!;
+        var storeConfiguration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Gateway:DataDirectory"] = dataDirectory })
+            .Build();
+        var store = new GatewayStateStore(storeConfiguration, new EphemeralDataProtectionProvider());
+        var settings = store.GetSnapshot().Settings;
+        settings.Irrigation = irrigation;
+        store.SaveAsync(settings, CancellationToken.None).GetAwaiter().GetResult();
+
         var http = new HttpClient(new ForecastHandler()) { BaseAddress = new Uri("https://example.test/") };
-        return new IrrigationService(configuration, new OpenMeteoForecastClient(http, configuration));
+        return new IrrigationService(store, new OpenMeteoForecastClient(http));
     }
 
     private sealed class ForecastHandler : HttpMessageHandler
