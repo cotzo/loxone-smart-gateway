@@ -94,18 +94,21 @@ public sealed class LoxoneIntegration
         status("Connected; receiving live state");
         try
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-            var diagnosticTicks = 0;
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                var keepAlive = await client.SendWebservice(new WebserviceRequest<string>("keepalive", EncryptionType.None));
-                if (keepAlive is null) throw new IOException("Miniserver WebSocket stopped responding to keepalive.");
+                // Loxone's protocol-level `keepalive` response is a special
+                // frame, not a normal webservice response. LxCommunicator's
+                // SendWebservice waits for a standard response and times out,
+                // so use a harmless read-only webservice request instead.
+                var healthCheck = await client.SendWebservice(
+                    new WebserviceRequest<string>("jdev/sps/LoxAPPversion", EncryptionType.None));
+                if (healthCheck is null)
+                    throw new IOException("Miniserver WebSocket stopped responding to the health check.");
 
-                if (++diagnosticTicks < 2) continue;
-                diagnosticTicks = 0;
                 var lastEventMs = Interlocked.Read(ref lastEventTableUnixMs);
                 Log.Information(
-                    "Loxone event-stream heartbeat for {server}: {eventTableCount} event tables received; last event table {lastEventTable}; keepalive succeeded",
+                    "Loxone event-stream heartbeat for {server}: {eventTableCount} event tables received; last event table {lastEventTable}; WebSocket health check succeeded",
                     server.Name,
                     Volatile.Read(ref eventTableCount),
                     lastEventMs == 0 ? "not received" : DateTimeOffset.FromUnixTimeMilliseconds(lastEventMs).ToString("O"));
