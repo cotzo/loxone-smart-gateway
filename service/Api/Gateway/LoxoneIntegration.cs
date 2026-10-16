@@ -94,23 +94,21 @@ public sealed class LoxoneIntegration
         status("Connected; receiving live state");
         try
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
-            var keepAliveTicks = 0;
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+            var diagnosticTicks = 0;
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
+                var keepAlive = await client.SendWebservice(new WebserviceRequest<string>("keepalive", EncryptionType.None));
+                if (keepAlive is null) throw new IOException("Miniserver WebSocket stopped responding to keepalive.");
+
+                if (++diagnosticTicks < 2) continue;
+                diagnosticTicks = 0;
                 var lastEventMs = Interlocked.Read(ref lastEventTableUnixMs);
                 Log.Information(
-                    "Loxone event-stream heartbeat for {server}: {eventTableCount} event tables received; last event table {lastEventTable}",
+                    "Loxone event-stream heartbeat for {server}: {eventTableCount} event tables received; last event table {lastEventTable}; keepalive succeeded",
                     server.Name,
                     Volatile.Read(ref eventTableCount),
                     lastEventMs == 0 ? "not received" : DateTimeOffset.FromUnixTimeMilliseconds(lastEventMs).ToString("O"));
-
-                // Keep the existing four-minute protocol keepalive interval while
-                // reporting event-stream health more frequently for diagnostics.
-                if (++keepAliveTicks < 4) continue;
-                keepAliveTicks = 0;
-                var keepAlive = await client.SendWebservice(new WebserviceRequest<string>("keepalive", EncryptionType.None));
-                if (keepAlive is null) throw new IOException("Miniserver WebSocket stopped responding.");
             }
         }
         finally { status("Disconnected"); }
@@ -131,13 +129,16 @@ public sealed class LoxoneIntegration
 
     private static string NormalizeUuid(string uuid) => uuid.Replace("-", string.Empty, StringComparison.Ordinal);
 
-    private static bool TryParseStateValue(string? raw, out double value)
+    internal static bool TryParseStateValue(string? raw, out double value)
     {
         if (double.TryParse(raw, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out value))
             return true;
 
         value = 0;
+        if (TryParseZeroHsv(raw))
+            return true;
+
         if (string.IsNullOrWhiteSpace(raw) || !raw.StartsWith("temp(", StringComparison.OrdinalIgnoreCase) || !raw.EndsWith(')'))
             return false;
 
@@ -151,6 +152,19 @@ public sealed class LoxoneIntegration
         // PhilipsHueMessageSender's TUNABLE format is 200000000 + brightness*10000 + Kelvin.
         value = 200_000_000 + Math.Round(brightness) * 10_000 + Math.Round(kelvin);
         return true;
+    }
+
+    private static bool TryParseZeroHsv(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) ||
+            !raw.StartsWith("hsv(", StringComparison.OrdinalIgnoreCase) ||
+            !raw.EndsWith(')'))
+            return false;
+
+        var components = raw[4..^1].Split(',');
+        return components.Length == 3 && components.All(component =>
+            double.TryParse(component.Trim(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var value) && value == 0);
     }
 
     private static async Task AuthenticateAsync(WebsocketWebserviceClient client, TokenHandler tokenHandler)

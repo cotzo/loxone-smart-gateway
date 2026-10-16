@@ -24,7 +24,7 @@ ARG TARGETARCH
 ARG BUILDPLATFORM
 RUN dotnet publish "service.csproj" -c $BUILD_CONFIGURATION -o /app/publish -a $TARGETARCH
 
-FROM --platform=$BUILDPLATFORM base AS final
+FROM base AS final
 ARG TARGETARCH
 ARG BUILDPLATFORM
 
