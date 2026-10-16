@@ -51,9 +51,11 @@ public sealed class LoxoneIntegration
         using var tokenHandler = new TokenHandler(client, server.Username);
         tokenHandler.SetPassword(server.Password);
         var eventTableCount = 0;
+        long lastEventTableUnixMs = 0;
         client.OnReceiveEventTable += (_, args) =>
         {
             var tableNumber = Interlocked.Increment(ref eventTableCount);
+            Interlocked.Exchange(ref lastEventTableUnixMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             if (tableNumber <= 3)
             {
                 var sampleStates = args.States.Take(3).Select(state =>
@@ -92,9 +94,21 @@ public sealed class LoxoneIntegration
         status("Connected; receiving live state");
         try
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(4));
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+            var keepAliveTicks = 0;
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
+                var lastEventMs = Interlocked.Read(ref lastEventTableUnixMs);
+                Log.Information(
+                    "Loxone event-stream heartbeat for {server}: {eventTableCount} event tables received; last event table {lastEventTable}",
+                    server.Name,
+                    Volatile.Read(ref eventTableCount),
+                    lastEventMs == 0 ? "not received" : DateTimeOffset.FromUnixTimeMilliseconds(lastEventMs).ToString("O"));
+
+                // Keep the existing four-minute protocol keepalive interval while
+                // reporting event-stream health more frequently for diagnostics.
+                if (++keepAliveTicks < 4) continue;
+                keepAliveTicks = 0;
                 var keepAlive = await client.SendWebservice(new WebserviceRequest<string>("keepalive", EncryptionType.None));
                 if (keepAlive is null) throw new IOException("Miniserver WebSocket stopped responding.");
             }

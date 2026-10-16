@@ -54,6 +54,7 @@ jobs:
             type=semver,pattern={{version}},value=${{ steps.version.outputs.new_tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.new_tag }}
             type=semver,pattern={{major}},value=${{ steps.version.outputs.new_tag }}
+            type=raw,value=main,enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
