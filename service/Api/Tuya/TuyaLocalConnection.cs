@@ -23,6 +23,7 @@ public sealed class TuyaLocalConnection : IDisposable
     private const uint CmdSessKeyNegResp = 4;
     private const uint CmdSessKeyNegFinish = 5;
     private const uint CmdControlNew = 13;
+    private const uint CmdDpQueryNew = 16;
 
     private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan AckTimeout = TimeSpan.FromSeconds(2);
@@ -90,6 +91,30 @@ public sealed class TuyaLocalConnection : IDisposable
         {
             Log.Debug("No acknowledgement from {device} within {timeout}", _device.Name, AckTimeout);
         }
+    }
+
+    public async Task<IReadOnlyDictionary<string, JsonElement>> GetDataPointsAsync(CancellationToken cancellationToken)
+    {
+        var query = Encoding.UTF8.GetBytes("{}");
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(OperationTimeout);
+        await SendFrame(CmdDpQueryNew, query, _sessionKey, cts.Token);
+        var (cmd, retCode, payload) = await ReceiveFrame(_sessionKey, cts.Token);
+        if (retCode != 0)
+            throw new ApplicationException($"Tuya status query failed for {_device.Name}: command {cmd}, code {retCode}");
+
+        using var document = JsonDocument.Parse(payload);
+        var root = document.RootElement;
+        var dps = root.TryGetProperty("dps", out var directDps)
+            ? directDps
+            : root.TryGetProperty("data", out var data) && data.TryGetProperty("dps", out var nestedDps)
+                ? nestedDps
+                : default;
+
+        if (dps.ValueKind != JsonValueKind.Object)
+            return new Dictionary<string, JsonElement>();
+
+        return dps.EnumerateObject().ToDictionary(x => x.Name, x => x.Value.Clone());
     }
 
     public void Dispose()

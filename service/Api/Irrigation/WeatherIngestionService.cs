@@ -1,4 +1,5 @@
 using System.Text.Json;
+using loxone.smart.gateway.Api.Gateway;
 using Serilog;
 
 namespace loxone.smart.gateway.Api.Irrigation;
@@ -9,10 +10,10 @@ public sealed class WeatherIngestionService
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly PendingWeather _pending = new();
 
-    public WeatherIngestionService(IrrigationService irrigationService, IConfiguration configuration)
+    public WeatherIngestionService(IrrigationService irrigationService, GatewayStateStore settingsStore)
     {
         _irrigationService = irrigationService;
-        var options = configuration.GetSection("Api:IrrigationConfiguration").Get<IrrigationConfiguration>() ?? new();
+        var options = settingsStore.GetSnapshot().Settings.Irrigation;
         HydratePending(options.StateFile);
     }
 

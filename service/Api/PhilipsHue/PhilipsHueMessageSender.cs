@@ -34,6 +34,7 @@ public class PhilipsHueMessageSender
         {
             throw new ApplicationException("PhilipsHue configuration is missing.");
         }
+
     }
 
     public void AddToQueue(PhilipsHueRequestModel model)
@@ -276,6 +277,20 @@ public class PhilipsHueMessageSender
         }
 
         return true;
+    }
+
+    public static string BuildCommandBody(int value, PhilipsHueLightType lightType, int transitionTime)
+    {
+        return lightType switch
+        {
+            PhilipsHueLightType.RGB => value < 200000000
+                ? GetRgbCommand(value, transitionTime)
+                : GetTunableCommand(value, transitionTime),
+            PhilipsHueLightType.TUNABLE => GetTunableCommand(value == 50050050 ? 200504586 : value, transitionTime),
+            PhilipsHueLightType.DIM => GetDimCommand(value, transitionTime),
+            PhilipsHueLightType.ONOFF => GetOnOffCommand(value, transitionTime),
+            _ => throw new ArgumentOutOfRangeException(nameof(lightType))
+        };
     }
 
     private async Task SetPowerOnBehavior(string lightId)

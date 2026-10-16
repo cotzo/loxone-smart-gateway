@@ -1,7 +1,14 @@
-version: '3'
 services:
   loxone-smart-gateway:
     image: ghcr.io/cotzo/loxone-smart-gateway:main
-    restart: always
+    restart: unless-stopped
     ports:
-      - 8080:8080
+      - "8080:8080"
+    environment:
+      Gateway__AdminPassword: ${GATEWAY_ADMIN_PASSWORD:?Set GATEWAY_ADMIN_PASSWORD in .env}
+      Gateway__DataDirectory: /data
+    volumes:
+      - gateway-data:/data
+
+volumes:
+  gateway-data:

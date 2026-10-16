@@ -1,0 +1,172 @@
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
+using loxone.smart.gateway.Api.PhilipsHue;
+using loxone.smart.gateway.Api.Tuya;
+
+namespace loxone.smart.gateway.Api.Gateway;
+
+public sealed class DeviceIntegrations(IHttpClientFactory clients)
+{
+    public async Task<IReadOnlyList<HueResource>> GetHueResourcesAsync(HueSettings bridge, CancellationToken cancellationToken)
+    {
+        using var client = CreateHueClient(bridge);
+        var resources = new List<HueResource>();
+        var locations = new Dictionary<string, (string Name, string Type)>(StringComparer.OrdinalIgnoreCase);
+        var membership = new Dictionary<string, (string? RoomId, string? ZoneId)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var type in new[] { "room", "zone" })
+        {
+            using var response = await client.GetAsync($"/clip/v2/resource/{type}", cancellationToken);
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            if (!json.RootElement.TryGetProperty("data", out var data)) continue;
+            foreach (var item in data.EnumerateArray())
+            {
+                if (!item.TryGetProperty("id", out var idValue)) continue;
+                var locationId = idValue.GetString();
+                if (string.IsNullOrWhiteSpace(locationId)) continue;
+                var locationName = locationId;
+                if (item.TryGetProperty("metadata", out var metadata) && metadata.TryGetProperty("name", out var nameValue))
+                {
+                    var name = nameValue.GetString();
+                    if (!string.IsNullOrWhiteSpace(name)) locationName = name;
+                }
+                locations[locationId] = (locationName, type);
+                if (!item.TryGetProperty("children", out var children)) continue;
+                foreach (var child in children.EnumerateArray())
+                {
+                    if (!child.TryGetProperty("rid", out var childId)) continue;
+                    var rid = childId.GetString();
+                    if (string.IsNullOrWhiteSpace(rid)) continue;
+                    var current = membership.GetValueOrDefault(rid);
+                    membership[rid] = type == "room" ? (locationId, current.ZoneId) : (current.RoomId, locationId);
+                }
+            }
+        }
+
+        using (var response = await client.GetAsync("/clip/v2/resource/device", cancellationToken))
+        {
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            if (json.RootElement.TryGetProperty("data", out var data))
+            {
+                foreach (var device in data.EnumerateArray())
+                {
+                    if (!device.TryGetProperty("id", out var deviceIdValue)) continue;
+                    var deviceId = deviceIdValue.GetString();
+                    if (string.IsNullOrWhiteSpace(deviceId) || !device.TryGetProperty("services", out var services)) continue;
+                    foreach (var service in services.EnumerateArray())
+                    {
+                        if (!service.TryGetProperty("rtype", out var rtype) || rtype.GetString() != "grouped_light" || !service.TryGetProperty("rid", out var groupedId)) continue;
+                        var groupedRid = groupedId.GetString();
+                        if (!string.IsNullOrWhiteSpace(groupedRid) && membership.TryGetValue(groupedRid, out var groupedMembership))
+                            membership[deviceId] = (membership.GetValueOrDefault(deviceId).RoomId ?? groupedMembership.RoomId,
+                                membership.GetValueOrDefault(deviceId).ZoneId ?? groupedMembership.ZoneId);
+                    }
+                }
+            }
+        }
+
+        var groupedLightNumber = 0;
+        foreach (var type in new[] { "light", "grouped_light" })
+        {
+            using var response = await client.GetAsync($"/clip/v2/resource/{type}", cancellationToken);
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            if (!json.RootElement.TryGetProperty("data", out var data)) continue;
+            foreach (var item in data.EnumerateArray())
+            {
+                var id = item.GetProperty("id").GetString();
+                if (type == "grouped_light") groupedLightNumber++;
+                var name = item.TryGetProperty("metadata", out var metadata) && metadata.TryGetProperty("name", out var nameValue)
+                    ? nameValue.GetString() : id;
+                string? ownerId = null;
+                string? ownerType = null;
+                if (item.TryGetProperty("owner", out var owner) && owner.TryGetProperty("rid", out var ownerIdValue)) ownerId = ownerIdValue.GetString();
+                if (item.TryGetProperty("owner", out owner) && owner.TryGetProperty("rtype", out var ownerTypeValue)) ownerType = ownerTypeValue.GetString();
+                var membershipInfo = ownerId is not null ? membership.GetValueOrDefault(ownerId) : default;
+                if (type == "grouped_light" && ownerId is not null && ownerType is "room" or "zone")
+                    membershipInfo = ownerType == "room" ? (ownerId, membershipInfo.ZoneId) : (membershipInfo.RoomId, ownerId);
+                if (membershipInfo.RoomId is not null && membershipInfo.ZoneId is null && membership.TryGetValue(membershipInfo.RoomId, out var roomMembership))
+                    membershipInfo = (membershipInfo.RoomId, roomMembership.ZoneId);
+                var room = membershipInfo.RoomId is not null ? locations.GetValueOrDefault(membershipInfo.RoomId) : default;
+                var zone = membershipInfo.ZoneId is not null ? locations.GetValueOrDefault(membershipInfo.ZoneId) : default;
+                if (type == "grouped_light" && ownerId is not null && locations.TryGetValue(ownerId, out var groupLocation)) name = groupLocation.Name;
+                if (type == "grouped_light" && (string.IsNullOrWhiteSpace(name) || Guid.TryParse(name, out _)))
+                    name = room.Name ?? zone.Name ?? $"Hue group {groupedLightNumber}";
+                var displayName = name ?? id ?? string.Empty;
+                if (type == "light" && room.Name is not null) displayName = $"{displayName} · {room.Name}";
+                if (!string.IsNullOrWhiteSpace(id)) resources.Add(new HueResource(id, type, displayName, bridge.Id,
+                    membershipInfo.RoomId, room.Name, membershipInfo.ZoneId, zone.Name));
+            }
+        }
+        return resources;
+    }
+
+    public async Task CheckHueAsync(HueSettings bridge, CancellationToken cancellationToken)
+    {
+        using var client = CreateHueClient(bridge);
+        using var response = await client.GetAsync("/clip/v2/resource/bridge", cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task SendHueAsync(HueSettings bridge, DeviceMapping mapping, double value, CancellationToken cancellationToken)
+    {
+        using var client = CreateHueClient(bridge);
+        var numeric = double.IsFinite(value) ? (int)Math.Round(value) : 0;
+        var lightType = mapping.ValueMode == "onOff" ? PhilipsHueLightType.ONOFF : mapping.HueLightType;
+        var command = PhilipsHueMessageSender.BuildCommandBody(numeric, lightType, mapping.TransitionTime);
+        using var content = new StringContent(command, Encoding.UTF8, "application/json");
+        using var response = await client.PutAsync($"/clip/v2/resource/{mapping.HueResourceType}/{Uri.EscapeDataString(mapping.TargetId)}", content, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"Hue returned {(int)response.StatusCode} ({response.StatusCode}): {responseBody}");
+
+        // Hue CLIP v2 can return HTTP 200 while reporting a rejected command in `errors`.
+        // Treat that as a failure so the mapping is retried and the actual bridge error is visible.
+        if (!string.IsNullOrWhiteSpace(responseBody))
+        {
+            using var result = JsonDocument.Parse(responseBody);
+            if (result.RootElement.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0)
+                throw new InvalidOperationException($"Hue rejected the command: {errors}");
+        }
+    }
+
+    public async Task<IReadOnlyList<TuyaDataPoint>> GetTuyaDataPointsAsync(TuyaDeviceSettings device, CancellationToken cancellationToken)
+    {
+        var config = ToTuyaConfiguration(device);
+        using var connection = new TuyaLocalConnection(config);
+        await connection.ConnectAsync(cancellationToken);
+        var points = await connection.GetDataPointsAsync(cancellationToken);
+        return points.Select(x => new TuyaDataPoint(x.Key, x.Value.ValueKind.ToString(), x.Value.ToString())).ToList();
+    }
+
+    public async Task SendTuyaAsync(TuyaDeviceSettings device, int dp, double value, string mode, CancellationToken cancellationToken)
+    {
+        using var connection = new TuyaLocalConnection(ToTuyaConfiguration(device));
+        await connection.ConnectAsync(cancellationToken);
+        using var document = JsonDocument.Parse(mode == "onOff"
+            ? (value != 0 ? "true" : "false")
+            : value.ToString("G", CultureInfo.InvariantCulture));
+        await connection.SetDataPointAsync(dp, document.RootElement, cancellationToken);
+    }
+
+    private HttpClient CreateHueClient(HueSettings bridge)
+    {
+        var host = bridge.Host.Contains("://", StringComparison.Ordinal) ? bridge.Host : $"https://{bridge.Host}";
+        var client = clients.CreateClient("HueDynamic");
+        client.BaseAddress = new Uri(host.TrimEnd('/') + "/");
+        client.Timeout = TimeSpan.FromSeconds(10);
+        client.DefaultRequestHeaders.TryAddWithoutValidation("hue-application-key", bridge.ApplicationKey);
+        return client;
+    }
+
+    private static TuyaDeviceConfiguration ToTuyaConfiguration(TuyaDeviceSettings device) => new()
+    {
+        Name = device.Name,
+        Id = device.DeviceId,
+        IP = device.IP,
+        LocalKey = device.LocalKey,
+        Version = device.Version
+    };
+}

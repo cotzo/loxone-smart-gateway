@@ -30,7 +30,7 @@ ARG BUILDPLATFORM
 
 RUN adduser --disabled-password \
     --home /app \
-    --gecos '' dotnetuser && chown -R dotnetuser /app
+    --gecos '' dotnetuser && mkdir -p /data && chown -R dotnetuser /app /data
 
 USER dotnetuser
 

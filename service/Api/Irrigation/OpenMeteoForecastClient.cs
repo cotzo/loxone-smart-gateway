@@ -2,16 +2,13 @@ using System.Text.Json.Serialization;
 
 namespace loxone.smart.gateway.Api.Irrigation;
 
-public sealed class OpenMeteoForecastClient(HttpClient httpClient, IConfiguration configuration)
+public sealed class OpenMeteoForecastClient(HttpClient httpClient)
 {
-    private readonly IrrigationConfiguration _options =
-        configuration.GetSection("Api:IrrigationConfiguration").Get<IrrigationConfiguration>() ?? new();
-
-    public async Task<ForecastSummary> GetForecastAsync(CancellationToken cancellationToken)
+    public async Task<ForecastSummary> GetForecastAsync(IrrigationConfiguration options, CancellationToken cancellationToken)
     {
-        var hours = Math.Clamp(_options.ForecastHours, 1, 168);
-        var url = $"v1/forecast?latitude={_options.Latitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}" +
-                  $"&longitude={_options.Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}" +
+        var hours = Math.Clamp(options.ForecastHours, 1, 168);
+        var url = $"v1/forecast?latitude={options.Latitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}" +
+                  $"&longitude={options.Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}" +
                   $"&hourly=precipitation,et0_fao_evapotranspiration&forecast_hours={hours}&timezone=auto";
 
         var response = await httpClient.GetFromJsonAsync<OpenMeteoResponse>(url, cancellationToken)

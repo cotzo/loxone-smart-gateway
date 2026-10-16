@@ -1,11 +1,12 @@
 using System.Text.Json;
+using loxone.smart.gateway.Api.Gateway;
 using Serilog;
 
 namespace loxone.smart.gateway.Api.Irrigation;
 
 public sealed class IrrigationService
 {
-    private readonly IrrigationConfiguration _options;
+    private IrrigationConfiguration _options;
     private readonly OpenMeteoForecastClient _forecast;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private IrrigationState _state;
@@ -13,9 +14,9 @@ public sealed class IrrigationService
     private DateTimeOffset _forecastRefreshAfter;
     private DateTimeOffset _forecastValidUntil;
 
-    public IrrigationService(IConfiguration configuration, OpenMeteoForecastClient forecast)
+    public IrrigationService(GatewayStateStore settingsStore, OpenMeteoForecastClient forecast)
     {
-        _options = configuration.GetSection("Api:IrrigationConfiguration").Get<IrrigationConfiguration>() ?? new();
+        _options = settingsStore.GetSnapshot().Settings.Irrigation;
         _forecast = forecast;
         _state = LoadState();
 
@@ -25,6 +26,9 @@ public sealed class IrrigationService
         CleanupIrrigationRuns(DateTimeOffset.UtcNow);
         WarnAboutInconsistentBalanceGroups();
     }
+
+    public void UpdateConfiguration(IrrigationConfiguration configuration) =>
+        Volatile.Write(ref _options, CloneConfiguration(configuration));
 
     public WeatherObservation? GetLatestObservation() =>
         _state.Observations.OrderByDescending(x => x.Timestamp).FirstOrDefault();
@@ -36,7 +40,8 @@ public sealed class IrrigationService
         {
             var receivedAt = DateTimeOffset.UtcNow;
             var timestamp = observation.Timestamp ?? receivedAt;
-            var allowedSkew = TimeSpan.FromMinutes(Math.Max(0, _options.MaximumTimestampSkewMinutes));
+            var options = Volatile.Read(ref _options);
+            var allowedSkew = TimeSpan.FromMinutes(Math.Max(0, options.MaximumTimestampSkewMinutes));
             if (timestamp < receivedAt - allowedSkew || timestamp > receivedAt + allowedSkew)
                 timestamp = receivedAt;
 
@@ -145,17 +150,21 @@ public sealed class IrrigationService
             _gate.Release();
         }
 
+        var options = Volatile.Read(ref _options);
         var now = DateTimeOffset.UtcNow;
-        observations = observations.Where(x => x.Timestamp is not null).OrderBy(x => x.Timestamp).ToList();
+        observations = observations
+            .Where(x => x.Timestamp is not null && x.Timestamp <= now.AddMinutes(Math.Max(0, options.MaximumTimestampSkewMinutes)))
+            .OrderBy(x => x.Timestamp)
+            .ToList();
         var cutoff24 = now.AddHours(-24);
         var cutoff72 = now.AddHours(-72);
         var last24 = observations.Where(x => x.Timestamp >= cutoff24).ToList();
         var rain24 = RainDelta(WindowWithBaseline(observations, cutoff24));
         var rain72 = RainDelta(WindowWithBaseline(observations, cutoff72));
-        var localDataComplete = HasComplete24HourCoverage(last24, now, _options);
-        var et0 = CalculateEt0(last24, _options);
+        var localDataComplete = HasComplete24HourCoverage(last24, now, options);
+        var et0 = CalculateEt0(last24, options);
         var forecast = await GetForecastAsync(cancellationToken);
-        var effectiveForecastRain = forecast.RainMm * _options.EffectiveRainFactor * _options.ForecastRainWeight;
+        var effectiveForecastRain = forecast.RainMm * options.EffectiveRainFactor * options.ForecastRainWeight;
 
         var zoneResults = new List<IrrigationZoneResult>();
         foreach (var group in GetConfiguredGroups())
@@ -241,9 +250,10 @@ public sealed class IrrigationService
 
         try
         {
-            _cachedForecast = await _forecast.GetForecastAsync(cancellationToken);
+            var options = Volatile.Read(ref _options);
+            _cachedForecast = await _forecast.GetForecastAsync(options, cancellationToken);
             _forecastRefreshAfter = now.AddMinutes(30);
-            _forecastValidUntil = now.AddHours(Math.Max(1, _options.ForecastHours));
+            _forecastValidUntil = now.AddHours(Math.Max(1, options.ForecastHours));
             return _cachedForecast;
         }
         catch (Exception ex)
@@ -413,24 +423,29 @@ public sealed class IrrigationService
 
     private IrrigationState LoadState()
     {
+        var stateFile = Volatile.Read(ref _options).StateFile;
         try
         {
-            if (!File.Exists(_options.StateFile)) return new IrrigationState();
-            return JsonSerializer.Deserialize<IrrigationState>(File.ReadAllText(_options.StateFile)) ?? new IrrigationState();
+            if (!File.Exists(stateFile)) return new IrrigationState();
+            return JsonSerializer.Deserialize<IrrigationState>(File.ReadAllText(stateFile)) ?? new IrrigationState();
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Unable to load irrigation state from {file}", _options.StateFile);
+            Log.Warning(ex, "Unable to load irrigation state from {file}", stateFile);
             return new IrrigationState();
         }
     }
 
     private async Task PersistAsync(CancellationToken cancellationToken)
     {
-        var directory = Path.GetDirectoryName(_options.StateFile);
+        var stateFile = Volatile.Read(ref _options).StateFile;
+        var directory = Path.GetDirectoryName(stateFile);
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-        var temp = _options.StateFile + ".tmp";
+        var temp = stateFile + ".tmp";
         await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(_state), cancellationToken);
-        File.Move(temp, _options.StateFile, true);
+        File.Move(temp, stateFile, true);
     }
+
+    private static IrrigationConfiguration CloneConfiguration(IrrigationConfiguration value) =>
+        JsonSerializer.Deserialize<IrrigationConfiguration>(JsonSerializer.Serialize(value)) ?? new();
 }

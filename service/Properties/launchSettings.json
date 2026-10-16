@@ -7,8 +7,7 @@
       "launchBrowser": false,
       "applicationUrl": "http://localhost:5009",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "Api:PhilipsHueConfiguration:IP": "1.2.3"
+        "ASPNETCORE_ENVIRONMENT": "Development"
       }
     },
     "https": {
