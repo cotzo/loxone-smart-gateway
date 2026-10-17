@@ -137,7 +137,7 @@ public sealed class LoxoneIntegration
             return true;
 
         value = 0;
-        if (TryParseZeroHsv(raw))
+        if (TryParseHsv(raw, out value))
             return true;
 
         if (string.IsNullOrWhiteSpace(raw) || !raw.StartsWith("temp(", StringComparison.OrdinalIgnoreCase) || !raw.EndsWith(')'))
@@ -155,17 +155,46 @@ public sealed class LoxoneIntegration
         return true;
     }
 
-    private static bool TryParseZeroHsv(string? raw)
+    private static bool TryParseHsv(string? raw, out double packedRgb)
     {
+        packedRgb = 0;
         if (string.IsNullOrWhiteSpace(raw) ||
             !raw.StartsWith("hsv(", StringComparison.OrdinalIgnoreCase) ||
             !raw.EndsWith(')'))
             return false;
 
         var components = raw[4..^1].Split(',');
-        return components.Length == 3 && components.All(component =>
-            double.TryParse(component.Trim(), System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var value) && value == 0);
+        if (components.Length != 3 ||
+            !double.TryParse(components[0].Trim(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var hue) ||
+            !double.TryParse(components[1].Trim(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var saturation) ||
+            !double.TryParse(components[2].Trim(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var brightness) ||
+            !double.IsFinite(hue) || !double.IsFinite(saturation) || !double.IsFinite(brightness) ||
+            hue is < 0 or > 360 || saturation is < 0 or > 100 || brightness is < 0 or > 100)
+            return false;
+
+        // Convert HSV (hue in degrees; saturation/value in percent) into the
+        // packed BGR-percentage value consumed by PhilipsHueMessageSender.
+        var chroma = brightness / 100 * saturation / 100;
+        var hueSector = (hue % 360) / 60;
+        var secondary = chroma * (1 - Math.Abs(hueSector % 2 - 1));
+        var (red, green, blue) = (int)hueSector switch
+        {
+            0 => (chroma, secondary, 0d),
+            1 => (secondary, chroma, 0d),
+            2 => (0d, chroma, secondary),
+            3 => (0d, secondary, chroma),
+            4 => (secondary, 0d, chroma),
+            _ => (chroma, 0d, secondary)
+        };
+        var match = brightness / 100 - chroma;
+        var redPercent = (int)Math.Round((red + match) * 100, MidpointRounding.AwayFromZero);
+        var greenPercent = (int)Math.Round((green + match) * 100, MidpointRounding.AwayFromZero);
+        var bluePercent = (int)Math.Round((blue + match) * 100, MidpointRounding.AwayFromZero);
+        packedRgb = bluePercent * 1_000_000d + greenPercent * 1_000d + redPercent;
+        return true;
     }
 
     private static async Task AuthenticateAsync(WebsocketWebserviceClient client, TokenHandler tokenHandler)
