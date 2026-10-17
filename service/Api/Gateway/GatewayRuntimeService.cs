@@ -52,10 +52,7 @@ public sealed class GatewayRuntimeService(
                 await loxone.RunSessionAsync(server,
                     (uuid, value) =>
                     {
-                        var hasMapping = store.GetSnapshot().Settings.Mappings.Any(mapping =>
-                            mapping.LoxoneServerId.Equals(server.Id, StringComparison.OrdinalIgnoreCase) &&
-                            NormalizeUuid(mapping.LoxoneStateUuid).Equals(NormalizeUuid(uuid), StringComparison.OrdinalIgnoreCase));
-                        if (hasMapping) Log.Information("Received mapped Loxone state {uuid} from {server} with value {value}", uuid, server.Name, value);
+                        Log.Information("Received mapped Loxone state {uuid} from {server} with value {value}", uuid, server.Name, value);
                         channel.Writer.TryWrite((uuid, value));
                     },
                     status => store.ReportLoxoneStatus(server.Id, status), watchedStateUuids, cancellationToken);

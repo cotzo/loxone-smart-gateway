@@ -70,20 +70,18 @@ public sealed class LoxoneIntegration
             foreach (var state in args.States)
             {
                 var uuid = ReadProperty(state, "Uuid", "UUID", "Id")?.ToString();
+                if (string.IsNullOrWhiteSpace(uuid) || !watchedStateUuids.Contains(NormalizeUuid(uuid))) continue;
+
                 var raw = ReadProperty(state, "Value", "DVal", "StateValue", "Text");
-                var watched = !string.IsNullOrWhiteSpace(uuid) && watchedStateUuids.Contains(NormalizeUuid(uuid));
-                if (watched)
-                {
-                    var members = state.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                        .Select(property => $"{property.Name}={property.GetValue(state) ?? "null"}")
-                        .Concat(state.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance)
-                            .Select(field => $"{field.Name}={field.GetValue(state) ?? "null"}"));
-                    Log.Information("Loxone mapped state payload {uuid}: {stateType} {members}", uuid, state.GetType().FullName, string.Join(", ", members));
-                }
-                if (string.IsNullOrWhiteSpace(uuid) || raw is null) continue;
+                var members = state.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Select(property => $"{property.Name}={property.GetValue(state) ?? "null"}")
+                    .Concat(state.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance)
+                        .Select(field => $"{field.Name}={field.GetValue(state) ?? "null"}"));
+                Log.Information("Loxone mapped state payload {uuid}: {stateType} {members}", uuid, state.GetType().FullName, string.Join(", ", members));
+                if (raw is null) continue;
                 if (TryParseStateValue(raw.ToString(), out var value))
                     onValue(uuid, value);
-                else if (watched) Log.Warning("Mapped Loxone state {uuid} did not contain a supported numeric or tunable-white value and was ignored", uuid);
+                else Log.Warning("Mapped Loxone state {uuid} did not contain a supported numeric or tunable-white value and was ignored", uuid);
             }
         };
         client.OnConnectionError += exception =>
