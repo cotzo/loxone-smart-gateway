@@ -13,6 +13,7 @@ ARG BUILDPLATFORM
 
 WORKDIR /src
 COPY ["service.csproj", "./"]
+COPY ["Loxone.Communicator/Loxone.Communicator.csproj", "Loxone.Communicator/"]
 RUN dotnet restore "service.csproj" -a $TARGETARCH
 COPY . .
 WORKDIR /src

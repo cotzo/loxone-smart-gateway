@@ -146,8 +146,6 @@ public sealed class GatewayStateStore
         {
             var protectedJson = File.ReadAllText(_filePath);
             var settings = JsonSerializer.Deserialize<GatewaySettings>(_protector.Unprotect(protectedJson), JsonOptions) ?? new GatewaySettings();
-            // The supported local Loxone communicator uses plain WebSocket on port 80.
-            foreach (var server in settings.LoxoneServers) server.Port = 80;
             return settings;
         }
         catch (Exception ex)

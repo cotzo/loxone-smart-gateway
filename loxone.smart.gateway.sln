@@ -4,6 +4,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "service", "service\service.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "service.tests", "service.tests\service.tests.csproj", "{A4B82170-E4E8-4F12-A0E6-95C5FA6C4C1B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Loxone.Communicator", "service\Loxone.Communicator\Loxone.Communicator.csproj", "{31D55B34-E00A-4BD0-96F0-49E4177E6504}"
+EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".github", ".github", "{57DB29F3-5845-4355-88D8-05F7986B93CB}"
 	ProjectSection(SolutionItems) = preProject
 		.github\workflows\publish.yml = .github\workflows\publish.yml
@@ -23,5 +25,9 @@ Global
 		{A4B82170-E4E8-4F12-A0E6-95C5FA6C4C1B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A4B82170-E4E8-4F12-A0E6-95C5FA6C4C1B}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A4B82170-E4E8-4F12-A0E6-95C5FA6C4C1B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{31D55B34-E00A-4BD0-96F0-49E4177E6504}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{31D55B34-E00A-4BD0-96F0-49E4177E6504}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{31D55B34-E00A-4BD0-96F0-49E4177E6504}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{31D55B34-E00A-4BD0-96F0-49E4177E6504}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

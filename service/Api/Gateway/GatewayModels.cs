@@ -21,6 +21,7 @@ public sealed class LoxoneSettings
     public string Host { get; set; } = string.Empty;
     public int Port { get; set; } = 80;
     public bool UseTls { get; set; }
+    public string CertificateAuthorityPem { get; set; } = string.Empty;
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
 }
@@ -75,6 +76,6 @@ public sealed record SafeGatewaySettings(
     IReadOnlyList<SafeTuyaDeviceSettings> TuyaDevices,
     IReadOnlyList<DeviceMapping> Mappings,
     IrrigationConfiguration Irrigation);
-public sealed record SafeLoxoneSettings(string Id, string Name, string Host, int Port, bool UseTls, string Username, bool HasPassword);
+public sealed record SafeLoxoneSettings(string Id, string Name, string Host, int Port, bool UseTls, string CertificateAuthorityPem, string Username, bool HasPassword);
 public sealed record SafeHueSettings(string Id, string Name, string Host, bool HasApplicationKey);
 public sealed record SafeTuyaDeviceSettings(string Id, string Name, string DeviceId, string IP, string Version, bool HasLocalKey);

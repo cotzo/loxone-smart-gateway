@@ -13,9 +13,7 @@ public sealed class LoxoneIntegration
 {
     public async Task<IReadOnlyList<LoxoneStateOption>> DiscoverAsync(LoxoneSettings server, CancellationToken cancellationToken)
     {
-        if (server.UseTls)
-            throw new NotSupportedException("The current Loxone communicator supports local ws connections, not WSS. Configure the local Miniserver HTTP/WebSocket port.");
-        using var client = new WebsocketWebserviceClient(server.Host, server.Port, 2, Guid.NewGuid().ToString(), "Loxone Smart Gateway");
+        using var client = new WebsocketWebserviceClient(server.Host, server.Port, 2, Guid.NewGuid().ToString(), "Loxone Smart Gateway", server.UseTls, server.CertificateAuthorityPem);
         // LxCommunicator 0.9.5 invokes this event without checking for subscribers.
         client.OnAuthenticated += (_, _) => { };
         await PrimePublicKeyAsync(client);
@@ -44,7 +42,7 @@ public sealed class LoxoneIntegration
     public async Task RunSessionAsync(LoxoneSettings server, Action<string, double> onValue, Action<string> status,
         IReadOnlySet<string> watchedStateUuids, CancellationToken cancellationToken)
     {
-        using var client = new WebsocketWebserviceClient(server.Host, server.Port, 2, Guid.NewGuid().ToString(), "Loxone Smart Gateway");
+        using var client = new WebsocketWebserviceClient(server.Host, server.Port, 2, Guid.NewGuid().ToString(), "Loxone Smart Gateway", server.UseTls, server.CertificateAuthorityPem);
         // LxCommunicator 0.9.5 invokes this event without checking for subscribers.
         client.OnAuthenticated += (_, _) => { };
         await PrimePublicKeyAsync(client);
@@ -88,27 +86,22 @@ public sealed class LoxoneIntegration
                 else if (watched) Log.Warning("Mapped Loxone state {uuid} did not contain a supported numeric or tunable-white value and was ignored", uuid);
             }
         };
+        client.OnConnectionError += exception =>
+            Log.Warning(exception, "Loxone websocket listener failed for {server}", server.Name);
         await AuthenticateAsync(client, tokenHandler);
         var response = await client.SendWebservice(new WebserviceRequest<string>("jdev/sps/enablebinstatusupdate", EncryptionType.None));
         if (response is null) throw new IOException("Miniserver closed the state subscription during setup.");
         status("Connected; receiving live state");
         try
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                // Loxone's protocol-level `keepalive` response is a special
-                // frame, not a normal webservice response. LxCommunicator's
-                // SendWebservice waits for a standard response and times out,
-                // so use a harmless read-only webservice request instead.
-                var healthCheck = await client.SendWebservice(
-                    new WebserviceRequest<string>("jdev/sps/LoxAPPversion", EncryptionType.None));
-                if (healthCheck is null)
-                    throw new IOException("Miniserver WebSocket stopped responding to the health check.");
+                await client.KeepAliveAsync(TimeSpan.FromSeconds(10), cancellationToken);
 
                 var lastEventMs = Interlocked.Read(ref lastEventTableUnixMs);
                 Log.Information(
-                    "Loxone event-stream heartbeat for {server}: {eventTableCount} event tables received; last event table {lastEventTable}; WebSocket health check succeeded",
+                    "Loxone event-stream heartbeat for {server}: {eventTableCount} event tables received; last event table {lastEventTable}; keepalive acknowledged",
                     server.Name,
                     Volatile.Read(ref eventTableCount),
                     lastEventMs == 0 ? "not received" : DateTimeOffset.FromUnixTimeMilliseconds(lastEventMs).ToString("O"));

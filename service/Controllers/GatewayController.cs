@@ -28,7 +28,7 @@ public sealed class GatewayController(
     {
         var settings = store.GetSnapshot().Settings;
         return Ok(new SafeGatewaySettings(
-            settings.LoxoneServers.Select(x => new SafeLoxoneSettings(x.Id, x.Name, x.Host, x.Port, x.UseTls, x.Username, !string.IsNullOrEmpty(x.Password))).ToList(),
+            settings.LoxoneServers.Select(x => new SafeLoxoneSettings(x.Id, x.Name, x.Host, x.Port, x.UseTls, x.CertificateAuthorityPem, x.Username, !string.IsNullOrEmpty(x.Password))).ToList(),
             settings.LoxoneStateCatalogs,
             settings.HueBridges.Select(x => new SafeHueSettings(x.Id, x.Name, x.Host, !string.IsNullOrEmpty(x.ApplicationKey))).ToList(),
             settings.HueResourceCatalogs,
@@ -45,7 +45,6 @@ public sealed class GatewayController(
         settings.HueResourceCatalogs = new Dictionary<string, HueResourceCatalog>(StringComparer.OrdinalIgnoreCase);
         foreach (var server in settings.LoxoneServers)
         {
-            server.Port = 80;
             if (string.IsNullOrEmpty(server.Password)) server.Password = existing.LoxoneServers.FirstOrDefault(x => x.Id == server.Id)?.Password ?? string.Empty;
             var previous = existing.LoxoneServers.FirstOrDefault(x => x.Id.Equals(server.Id, StringComparison.OrdinalIgnoreCase));
             if (previous is not null && previous.Host.Equals(server.Host, StringComparison.OrdinalIgnoreCase) && previous.Username.Equals(server.Username, StringComparison.Ordinal))
