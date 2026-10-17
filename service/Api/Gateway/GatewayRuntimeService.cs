@@ -113,10 +113,17 @@ public sealed class GatewayRuntimeService(
                 if (item.RetryAfter > now) continue;
                 try
                 {
-                    await ApplyMappingAsync(item.Mapping, item.Value, cancellationToken);
+                    var applied = await ApplyMappingAsync(item.Mapping, item.Value, cancellationToken);
                     pending.Remove(id);
-                    store.ReportSync();
-                    Log.Information("Mapping {mapping} command accepted by {targetType} target {targetId}", item.Mapping.Name, item.Mapping.TargetType, item.Mapping.TargetId);
+                    if (applied)
+                    {
+                        store.ReportSync();
+                        Log.Information("Mapping {mapping} command accepted by {targetType} target {targetId}", item.Mapping.Name, item.Mapping.TargetType, item.Mapping.TargetId);
+                    }
+                    else
+                    {
+                        Log.Warning("Skipping invalid Loxone value {value} for mapping {mapping}; the Hue tunable-white value must be 0 or encode brightness 1–100 and temperature 2700–6500 K", item.Value, item.Mapping.Name);
+                    }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception ex)
@@ -132,14 +139,15 @@ public sealed class GatewayRuntimeService(
         }
     }
 
-    private async Task ApplyMappingAsync(DeviceMapping mapping, string sourceValue, CancellationToken cancellationToken)
+    private async Task<bool> ApplyMappingAsync(DeviceMapping mapping, string sourceValue, CancellationToken cancellationToken)
     {
         var settings = store.GetSnapshot().Settings;
         var convertedValue = MappingValueConverter.Convert(mapping, sourceValue);
         if (mapping.TargetType == "hue")
         {
             var bridge = settings.HueBridges.First(x => x.Id == mapping.TargetConnectionId);
-            await devices.SendHueAsync(bridge, mapping, convertedValue, cancellationToken);
+            var applied = await devices.SendHueAsync(bridge, mapping, convertedValue, cancellationToken);
+            if (!applied) return false;
             store.ReportHueStatus(bridge.Id, "Connected; command accepted");
         }
         else
@@ -148,6 +156,8 @@ public sealed class GatewayRuntimeService(
             await devices.SendTuyaAsync(device, mapping.TuyaDp!.Value, convertedValue, cancellationToken);
             store.ReportTuyaStatus(device.Id, "Connected; command accepted");
         }
+
+        return true;
     }
 
     private static string NormalizeUuid(string uuid) => uuid.Replace("-", string.Empty, StringComparison.Ordinal);

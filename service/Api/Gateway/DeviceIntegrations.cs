@@ -110,7 +110,7 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task SendHueAsync(HueSettings bridge, DeviceMapping mapping, JsonElement value, CancellationToken cancellationToken)
+    public async Task<bool> SendHueAsync(HueSettings bridge, DeviceMapping mapping, JsonElement value, CancellationToken cancellationToken)
     {
         using var client = CreateHueClient(bridge);
         var lightType = mapping.HueLightType;
@@ -130,6 +130,10 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
             numeric = (int)Math.Round(number);
         }
         else throw new InvalidOperationException("Hue commands require a numeric or Boolean converted value.");
+
+        if (lightType == PhilipsHueLightType.TUNABLE && !IsValidTunableWhiteValue(numeric))
+            return false;
+
         var command = PhilipsHueMessageSender.BuildCommandBody(numeric, lightType, mapping.TransitionTime);
         using var content = new StringContent(command, Encoding.UTF8, "application/json");
         using var response = await client.PutAsync($"/clip/v2/resource/{mapping.HueResourceType}/{Uri.EscapeDataString(mapping.TargetId)}", content, cancellationToken);
@@ -145,6 +149,18 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
             if (result.RootElement.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0)
                 throw new InvalidOperationException($"Hue rejected the command: {errors}");
         }
+
+        return true;
+    }
+
+    private static bool IsValidTunableWhiteValue(int value)
+    {
+        if (value is 0 or 50_050_050) return true;
+        if (value < 200_000_000) return false;
+
+        var brightness = (value - 200_000_000) / 10_000;
+        var kelvin = value - 200_000_000 - brightness * 10_000;
+        return brightness is >= 1 and <= 100 && kelvin is >= 2_700 and <= 6_500;
     }
 
     public async Task<IReadOnlyList<TuyaDataPoint>> GetTuyaDataPointsAsync(TuyaDeviceSettings device, CancellationToken cancellationToken)
