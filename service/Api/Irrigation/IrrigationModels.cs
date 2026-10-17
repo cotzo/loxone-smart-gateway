@@ -11,9 +11,9 @@ public sealed record WeatherObservation(
 
 public sealed class IrrigationConfiguration
 {
-    public double Latitude { get; set; }
-    public double Longitude { get; set; }
-    public double ElevationM { get; set; }
+    public double Latitude { get; set; } = 46.77;
+    public double Longitude { get; set; } = 23.59;
+    public double ElevationM { get; set; } = 477;
     public double LuxPerWattM2 { get; set; } = 120;
     public double EffectiveRainFactor { get; set; } = 0.8;
     public double ForecastRainWeight { get; set; } = 0.75;
