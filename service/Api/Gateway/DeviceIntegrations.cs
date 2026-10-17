@@ -110,11 +110,26 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task SendHueAsync(HueSettings bridge, DeviceMapping mapping, double value, CancellationToken cancellationToken)
+    public async Task SendHueAsync(HueSettings bridge, DeviceMapping mapping, JsonElement value, CancellationToken cancellationToken)
     {
         using var client = CreateHueClient(bridge);
-        var numeric = double.IsFinite(value) ? (int)Math.Round(value) : 0;
-        var lightType = mapping.ValueMode == "onOff" ? PhilipsHueLightType.ONOFF : mapping.HueLightType;
+        var lightType = mapping.HueLightType;
+        int numeric;
+        if (value.ValueKind == JsonValueKind.True)
+        {
+            lightType = PhilipsHueLightType.ONOFF;
+            numeric = 1;
+        }
+        else if (value.ValueKind == JsonValueKind.False)
+        {
+            lightType = PhilipsHueLightType.ONOFF;
+            numeric = 0;
+        }
+        else if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) && double.IsFinite(number))
+        {
+            numeric = (int)Math.Round(number);
+        }
+        else throw new InvalidOperationException("Hue commands require a numeric or Boolean converted value.");
         var command = PhilipsHueMessageSender.BuildCommandBody(numeric, lightType, mapping.TransitionTime);
         using var content = new StringContent(command, Encoding.UTF8, "application/json");
         using var response = await client.PutAsync($"/clip/v2/resource/{mapping.HueResourceType}/{Uri.EscapeDataString(mapping.TargetId)}", content, cancellationToken);
@@ -141,14 +156,11 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
         return points.Select(x => new TuyaDataPoint(x.Key, x.Value.ValueKind.ToString(), x.Value.ToString())).ToList();
     }
 
-    public async Task SendTuyaAsync(TuyaDeviceSettings device, int dp, double value, string mode, CancellationToken cancellationToken)
+    public async Task SendTuyaAsync(TuyaDeviceSettings device, int dp, JsonElement value, CancellationToken cancellationToken)
     {
         using var connection = new TuyaLocalConnection(ToTuyaConfiguration(device));
         await connection.ConnectAsync(cancellationToken);
-        using var document = JsonDocument.Parse(mode == "onOff"
-            ? (value != 0 ? "true" : "false")
-            : value.ToString("G", CultureInfo.InvariantCulture));
-        await connection.SetDataPointAsync(dp, document.RootElement, cancellationToken);
+        await connection.SetDataPointAsync(dp, value, cancellationToken);
     }
 
     private HttpClient CreateHueClient(HueSettings bridge)

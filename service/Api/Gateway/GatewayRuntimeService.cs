@@ -35,7 +35,7 @@ public sealed class GatewayRuntimeService(
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            var channel = Channel.CreateUnbounded<(string Uuid, double Value)>(new UnboundedChannelOptions
+            var channel = Channel.CreateUnbounded<(string Uuid, string Value)>(new UnboundedChannelOptions
             {
                 SingleReader = true,
                 SingleWriter = false
@@ -76,10 +76,10 @@ public sealed class GatewayRuntimeService(
         }
     }
 
-    private async Task ProcessStatesAsync(string serverId, ChannelReader<(string Uuid, double Value)> reader, CancellationToken cancellationToken)
+    private async Task ProcessStatesAsync(string serverId, ChannelReader<(string Uuid, string Value)> reader, CancellationToken cancellationToken)
     {
-        var pending = new Dictionary<string, (DeviceMapping Mapping, double Value, DateTimeOffset RetryAfter, int Attempts)>();
-        var lastValues = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        var pending = new Dictionary<string, (DeviceMapping Mapping, string Value, DateTimeOffset RetryAfter, int Attempts)>();
+        var lastValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -132,19 +132,20 @@ public sealed class GatewayRuntimeService(
         }
     }
 
-    private async Task ApplyMappingAsync(DeviceMapping mapping, double value, CancellationToken cancellationToken)
+    private async Task ApplyMappingAsync(DeviceMapping mapping, string sourceValue, CancellationToken cancellationToken)
     {
         var settings = store.GetSnapshot().Settings;
+        var convertedValue = MappingValueConverter.Convert(mapping, sourceValue);
         if (mapping.TargetType == "hue")
         {
             var bridge = settings.HueBridges.First(x => x.Id == mapping.TargetConnectionId);
-            await devices.SendHueAsync(bridge, mapping, value, cancellationToken);
+            await devices.SendHueAsync(bridge, mapping, convertedValue, cancellationToken);
             store.ReportHueStatus(bridge.Id, "Connected; command accepted");
         }
         else
         {
             var device = settings.TuyaDevices.First(x => x.Id == mapping.TargetConnectionId);
-            await devices.SendTuyaAsync(device, mapping.TuyaDp!.Value, value, mapping.ValueMode, cancellationToken);
+            await devices.SendTuyaAsync(device, mapping.TuyaDp!.Value, convertedValue, cancellationToken);
             store.ReportTuyaStatus(device.Id, "Connected; command accepted");
         }
     }

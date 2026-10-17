@@ -145,13 +145,28 @@ public sealed class GatewayStateStore
         try
         {
             var protectedJson = File.ReadAllText(_filePath);
-            var settings = JsonSerializer.Deserialize<GatewaySettings>(_protector.Unprotect(protectedJson), JsonOptions) ?? new GatewaySettings();
+            var json = _protector.Unprotect(protectedJson);
+            var migration = new PersistedGatewaySettingsMigrator().Migrate(json);
+            var settings = JsonSerializer.Deserialize<GatewaySettings>(migration.Json, JsonOptions) ?? new GatewaySettings();
+            if (migration.Changed)
+            {
+                PersistMigratedSettings(migration.Json);
+                Serilog.Log.Information("Migrated {MappingCount} persisted mapping(s) to the converter pipeline schema", migration.MappingsMigrated);
+            }
             return settings;
         }
         catch (Exception ex)
         {
             throw new InvalidOperationException("Unable to decrypt or read the persisted gateway settings. Preserve the data volume and its Data Protection keys.", ex);
         }
+    }
+
+    private void PersistMigratedSettings(string json)
+    {
+        var tempPath = _filePath + ".migration.tmp";
+        File.WriteAllText(tempPath, _protector.Protect(json));
+        TryRestrictFilePermissions(tempPath);
+        File.Move(tempPath, _filePath, true);
     }
 
     private static GatewaySettings Clone(GatewaySettings value) =>
@@ -182,12 +197,12 @@ public sealed class GatewayStateStore
                 throw new ArgumentException("A mapping refers to an unknown Loxone server.");
             if (mapping.TargetType is not ("hue" or "tuya"))
                 throw new ArgumentException("Mapping target type must be hue or tuya.");
-            if (mapping.ValueMode is not ("direct" or "onOff" or "loxoneDmx"))
-                throw new ArgumentException("Value mode must be direct, onOff, or loxoneDmx.");
+            ValidateConverter(mapping.Converter);
             if (mapping.TargetType == "tuya" && mapping.TuyaDp is null)
                 throw new ArgumentException("Tuya mappings require a datapoint number.");
             if (mapping.TargetType == "hue" && mapping.HueResourceType is not ("light" or "grouped_light"))
                 throw new ArgumentException("Hue resource type must be light or grouped_light.");
+            if (mapping.TargetType == "hue") ValidateHueConverterOutputs(mapping.Converter);
             if (mapping.TargetType == "hue" && !settings.HueBridges.Any(x => x.Id == mapping.TargetConnectionId))
                 throw new ArgumentException("A mapping refers to an unknown Hue bridge.");
             if (mapping.TargetType == "tuya" && !settings.TuyaDevices.Any(x => x.Id == mapping.TargetConnectionId))
@@ -206,6 +221,40 @@ public sealed class GatewayStateStore
     {
         if (values.GroupBy(x => x, StringComparer.OrdinalIgnoreCase).Any(x => x.Count() > 1))
             throw new ArgumentException($"{label} must be unique.");
+    }
+
+    private static void ValidateConverter(MappingValueConverterSettings converter)
+    {
+        if (converter.Type is not ("direct" or "onOff" or "packedColor" or "hsv" or "tunableWhite" or "lookup" or "range"))
+            throw new ArgumentException("Unknown mapping value converter type.");
+        if (converter.Type == "lookup")
+        {
+            if (converter.ExactRules.Count == 0 || converter.ExactRules.Any(x => !double.IsFinite(x.InputValue)))
+                throw new ArgumentException("A lookup converter requires at least one finite input value.");
+            if (converter.ExactRules.GroupBy(x => x.InputValue).Any(x => x.Count() > 1))
+                throw new ArgumentException("Lookup converter input values must be unique.");
+            foreach (var rule in converter.ExactRules)
+                _ = MappingValueConverter.ParseOutput(rule.OutputType, rule.OutputValue);
+        }
+        if (converter.Type == "range")
+        {
+            if (!double.IsFinite(converter.RangeMinimum) || !double.IsFinite(converter.RangeMaximum) || converter.RangeMinimum > converter.RangeMaximum)
+                throw new ArgumentException("Tuya converter range minimum must be finite and no greater than its maximum.");
+            _ = MappingValueConverter.ParseOutput(converter.InsideOutputType, converter.InsideOutputValue);
+            _ = MappingValueConverter.ParseOutput(converter.OutsideOutputType, converter.OutsideOutputValue);
+        }
+    }
+
+    private static void ValidateHueConverterOutputs(MappingValueConverterSettings converter)
+    {
+        var outputTypes = converter.Type switch
+        {
+            "lookup" => converter.ExactRules.Select(x => x.OutputType),
+            "range" => new[] { converter.InsideOutputType, converter.OutsideOutputType },
+            _ => Array.Empty<string>()
+        };
+        if (outputTypes.Any(x => x == "string"))
+            throw new ArgumentException("Hue targets require numeric or Boolean converter outputs; text outputs are supported by Tuya targets.");
     }
 
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);

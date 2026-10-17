@@ -39,7 +39,7 @@ public sealed class LoxoneIntegration
     public async Task CheckAsync(LoxoneSettings server, CancellationToken cancellationToken) =>
         _ = await DiscoverAsync(server, cancellationToken);
 
-    public async Task RunSessionAsync(LoxoneSettings server, Action<string, double> onValue, Action<string> status,
+    public async Task RunSessionAsync(LoxoneSettings server, Action<string, string> onValue, Action<string> status,
         IReadOnlySet<string> watchedStateUuids, CancellationToken cancellationToken)
     {
         using var client = new WebsocketWebserviceClient(server.Host, server.Port, 2, Guid.NewGuid().ToString(), "Loxone Smart Gateway", server.UseTls, server.CertificateAuthorityPem);
@@ -79,9 +79,7 @@ public sealed class LoxoneIntegration
                         .Select(field => $"{field.Name}={field.GetValue(state) ?? "null"}"));
                 Log.Information("Loxone mapped state payload {uuid}: {stateType} {members}", uuid, state.GetType().FullName, string.Join(", ", members));
                 if (raw is null) continue;
-                if (TryParseStateValue(raw.ToString(), out var value))
-                    onValue(uuid, value);
-                else Log.Warning("Mapped Loxone state {uuid} did not contain a supported numeric or tunable-white value and was ignored", uuid);
+                onValue(uuid, raw.ToString() ?? string.Empty);
             }
         };
         client.OnConnectionError += exception =>

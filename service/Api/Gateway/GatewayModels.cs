@@ -57,7 +57,26 @@ public sealed class DeviceMapping
     public PhilipsHueLightType HueLightType { get; set; } = PhilipsHueLightType.DIM;
     public int TransitionTime { get; set; } = 1000;
     public int? TuyaDp { get; set; }
-    public string ValueMode { get; set; } = "direct";
+    public MappingValueConverterSettings Converter { get; set; } = new();
+}
+
+public sealed class MappingValueConverterSettings
+{
+    public string Type { get; set; } = "direct";
+    public List<ExactValueRule> ExactRules { get; set; } = [];
+    public double RangeMinimum { get; set; }
+    public double RangeMaximum { get; set; } = 1;
+    public string InsideOutputType { get; set; } = "boolean";
+    public string InsideOutputValue { get; set; } = "true";
+    public string OutsideOutputType { get; set; } = "boolean";
+    public string OutsideOutputValue { get; set; } = "false";
+}
+
+public sealed class ExactValueRule
+{
+    public double InputValue { get; set; }
+    public string OutputType { get; set; } = "string";
+    public string OutputValue { get; set; } = string.Empty;
 }
 
 public sealed record LoxoneStateOption(string Uuid, string Control, string Type, string State, string ServerId);
