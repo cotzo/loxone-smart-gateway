@@ -28,6 +28,7 @@ public sealed class HueDeviceIntegrationTests
 
     [Theory]
     [InlineData(0)]
+    [InlineData(200002700)]
     [InlineData(200012700)]
     [InlineData(201006500)]
     [InlineData(50050050)]

@@ -160,7 +160,7 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
 
         var brightness = (value - 200_000_000) / 10_000;
         var kelvin = value - 200_000_000 - brightness * 10_000;
-        return brightness is >= 1 and <= 100 && kelvin is >= 2_700 and <= 6_500;
+        return brightness is >= 0 and <= 100 && kelvin is >= 2_700 and <= 6_500;
     }
 
     public async Task<IReadOnlyList<TuyaDataPoint>> GetTuyaDataPointsAsync(TuyaDeviceSettings device, CancellationToken cancellationToken)
