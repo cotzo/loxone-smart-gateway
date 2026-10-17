@@ -31,6 +31,8 @@ namespace Loxone.Communicator {
 		/// A Listener to catch every incoming message from the miniserver
 		/// </summary>
 		private Task Listener;
+		private readonly TaskCompletionSource<Exception> ConnectionFailureSource = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
+		public Task<Exception> ConnectionFailure => ConnectionFailureSource.Task;
 
 		/// <summary>
 		/// Event, fired when a not expected Message is received.
@@ -151,10 +153,11 @@ namespace Loxone.Communicator {
 				TokenSource.Cancel();
 				Listener = null;
 			}
+			var listenerToken = TokenSource.Token;
 			Listener = Task.Run(async () => {
 				try {
 					while (WebSocket.State == WebSocketState.Open) {
-						WebserviceResponse response = await ReceiveWebsocketMessage(1024, TokenSource.Token);
+						WebserviceResponse response = await ReceiveWebsocketMessage(1024, listenerToken);
 						if (response.Header.Type == MessageType.KeepAlive) {
 							PendingKeepAlive?.TrySetResult(true);
 							OnReceiveKeepAlive?.Invoke(this, EventArgs.Empty);
@@ -165,15 +168,18 @@ namespace Loxone.Communicator {
 						else if (!HandleWebserviceResponse(response) && !ParseEventTable(response.Content, response.Header.Type)) {
 							OnReceiveMessge?.Invoke(WebSocket, new MessageReceivedEventArgs(response));
 						}
-						await Task.Delay(10, TokenSource.Token);
+						await Task.Delay(10, listenerToken);
 					}
+					if (!listenerToken.IsCancellationRequested)
+						throw new WebserviceException($"Miniserver websocket stopped in state {WebSocket.State} (status {(int?)WebSocket.CloseStatus}: {WebSocket.CloseStatusDescription ?? "no description"}).");
 				}
-				catch (OperationCanceledException) when (TokenSource.IsCancellationRequested) {
+				catch (Exception) when (listenerToken.IsCancellationRequested) {
 				}
 				catch (Exception exception) {
+					ConnectionFailureSource.TrySetResult(exception);
 					OnConnectionError?.Invoke(exception);
 				}
-			}, TokenSource.Token);
+			}, listenerToken);
 		}
 
 		/// <summary>
@@ -276,7 +282,7 @@ namespace Loxone.Communicator {
 				do {
 					result = await WebSocket?.ReceiveAsync(new ArraySegment<byte>(buffer, offset, Math.Max(0, buffer.Length - offset)), token);
 					if (result.MessageType == WebSocketMessageType.Close)
-						throw new WebSocketException($"Miniserver closed the websocket (status {(int?)WebSocket.CloseStatus}: {WebSocket.CloseStatusDescription ?? "no description"}).");
+						throw new WebSocketException($"Miniserver closed the websocket (status {(int?)result.CloseStatus}: {result.CloseStatusDescription ?? "no description"}).");
 					offset += result.Count;
 					if (offset >= buffer.Length) {
 						await stream.WriteAsync(buffer, 0, buffer.Length, token);

@@ -94,9 +94,16 @@ public sealed class LoxoneIntegration
         status("Connected; receiving live state");
         try
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-            while (await timer.WaitForNextTickAsync(cancellationToken))
+            while (!cancellationToken.IsCancellationRequested)
             {
+                var keepAliveDelay = Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+                var completed = await Task.WhenAny(keepAliveDelay, client.ConnectionFailure);
+                if (completed == client.ConnectionFailure)
+                {
+                    var listenerError = await client.ConnectionFailure;
+                    throw new IOException($"Miniserver WebSocket listener stopped: {listenerError.Message}", listenerError);
+                }
+                await keepAliveDelay;
                 await client.KeepAliveAsync(TimeSpan.FromSeconds(10), cancellationToken);
 
                 var lastEventMs = Interlocked.Read(ref lastEventTableUnixMs);
