@@ -20,11 +20,11 @@ public sealed class PersistedGatewaySettingsMigrator
         foreach (var node in mappings)
         {
             if (node is not JsonObject mapping) continue;
-            var oldValueMode = Get(mapping, "valueMode")?.GetValue<string>();
+            var oldValueMode = GetString(mapping, "valueMode");
             var oldTuyaConverter = Get(mapping, "tuyaConverter") as JsonObject;
             var converter = Get(mapping, "converter") as JsonObject;
             var converterTypeNode = Get(converter, "type");
-            var converterTypeExisting = converterTypeNode?.GetValue<string>();
+            var converterTypeExisting = GetString(converter, "type");
             var legacyHueColorMode = IsLegacyHueTextColorMapping(root, mapping, converterTypeExisting);
             if (oldValueMode is null && oldTuyaConverter is null && !legacyHueColorMode) continue;
 
@@ -36,7 +36,7 @@ public sealed class PersistedGatewaySettingsMigrator
 
             // The old Hue mode and the intermediate Tuya converter coexisted;
             // preserve the explicit Tuya transform when it was configured.
-            var oldTuyaMode = Get(oldTuyaConverter, "mode")?.GetValue<string>()?.ToLowerInvariant();
+            var oldTuyaMode = GetString(oldTuyaConverter, "mode")?.ToLowerInvariant();
             var converterType = oldTuyaMode switch
             {
                 "lookup" => "lookup",
@@ -71,28 +71,48 @@ public sealed class PersistedGatewaySettingsMigrator
 
     private static bool IsLegacyHueTextColorMapping(JsonObject root, JsonObject mapping, string? currentConverterType)
     {
-        if (!string.Equals(Get(mapping, "targetType")?.GetValue<string>(), "hue", StringComparison.OrdinalIgnoreCase) ||
+        if (!string.Equals(GetString(mapping, "targetType"), "hue", StringComparison.OrdinalIgnoreCase) ||
             currentConverterType is not (null or "direct"))
             return false;
 
-        var lightType = Get(mapping, "hueLightType")?.GetValue<string>();
+        var lightType = GetHueLightType(mapping);
         if (lightType is not ("RGB" or "TUNABLE")) return false;
 
-        var serverId = Get(mapping, "loxoneServerId")?.GetValue<string>();
-        var stateUuid = Get(mapping, "loxoneStateUuid")?.GetValue<string>();
+        var serverId = GetString(mapping, "loxoneServerId");
+        var stateUuid = GetString(mapping, "loxoneStateUuid");
         if (serverId is null || stateUuid is null || Get(root, "loxoneStateCatalogs") is not JsonObject catalogs ||
             Get(catalogs, serverId) is not JsonObject catalog || Get(catalog, "states") is not JsonArray states)
             return false;
 
         return states.OfType<JsonObject>().Any(state =>
-            string.Equals(Get(state, "uuid")?.GetValue<string>(), stateUuid, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(Get(state, "type")?.GetValue<string>(), "TextState", StringComparison.OrdinalIgnoreCase));
+            string.Equals(GetString(state, "uuid"), stateUuid, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(GetString(state, "type"), "TextState", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetHueTextColorConverter(JsonObject mapping) =>
-        string.Equals(Get(mapping, "hueLightType")?.GetValue<string>(), "RGB", StringComparison.OrdinalIgnoreCase)
+        string.Equals(GetHueLightType(mapping), "RGB", StringComparison.OrdinalIgnoreCase)
             ? "hsv"
             : "tunableWhite";
+
+    private static string? GetHueLightType(JsonObject mapping)
+    {
+        var node = Get(mapping, "hueLightType");
+        if (node is null) return null;
+        if (node.GetValueKind() == JsonValueKind.String) return node.GetValue<string>();
+
+        // System.Text.Json serializes PhilipsHueLightType as its numeric enum
+        // value in persisted settings unless a string-enum converter is used.
+        if (node.GetValueKind() == JsonValueKind.Number && node is JsonValue jsonValue && jsonValue.TryGetValue<int>(out var value))
+            return value switch { 0 => "RGB", 1 => "TUNABLE", 2 => "DIM", 3 => "ONOFF", _ => null };
+
+        return null;
+    }
+
+    private static string? GetString(JsonObject? value, string name)
+    {
+        var node = Get(value, name);
+        return node?.GetValueKind() == JsonValueKind.String ? node.GetValue<string>() : null;
+    }
 
     private static void CopyLegacyConverterFields(JsonObject legacy, JsonObject converter)
     {

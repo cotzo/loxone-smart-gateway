@@ -61,4 +61,15 @@ public sealed class PersistedGatewaySettingsMigratorTests
         Assert.True(result.Changed);
         Assert.Contains($"\"type\":\"{expectedType}\"", result.Json);
     }
+
+    [Fact]
+    public void Numeric_hue_light_type_in_persisted_settings_is_supported()
+    {
+        const string json = """{"loxoneStateCatalogs":{"server":{"states":[{"uuid":"state","type":"TextState"}]}},"mappings":[{"targetType":"hue","hueLightType":0,"loxoneServerId":"server","loxoneStateUuid":"state","converter":{"type":"direct"}}]}""";
+
+        var result = _migrator.Migrate(json);
+
+        Assert.True(result.Changed);
+        Assert.Contains("\"type\":\"hsv\"", result.Json);
+    }
 }
