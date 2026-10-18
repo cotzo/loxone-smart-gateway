@@ -133,11 +133,15 @@ public sealed class IrrigationServiceTests
         var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{},\"IrrigationRuns\":[]}");
         try
         {
-            var service = CreateService(stateFile, new Dictionary<string, string?>());
+            var requestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var service = CreateService(stateFile, new Dictionary<string, string?>(), new ForecastHandler(requestStarted));
             using var cancellation = new CancellationTokenSource();
+
+            var calculation = service.CalculateAsync(cancellation.Token);
+            await requestStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cancellation.Cancel();
 
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.CalculateAsync(cancellation.Token));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => calculation);
         }
         finally
         {
@@ -181,7 +185,7 @@ public sealed class IrrigationServiceTests
         return path;
     }
 
-    private static IrrigationService CreateService(string stateFile, IDictionary<string, string?> extra)
+    private static IrrigationService CreateService(string stateFile, IDictionary<string, string?> extra, ForecastHandler? forecastHandler = null)
     {
         var values = new Dictionary<string, string?>(extra)
         {
@@ -205,19 +209,27 @@ public sealed class IrrigationServiceTests
         settings.Irrigation = irrigation;
         store.SaveAsync(settings, CancellationToken.None).GetAwaiter().GetResult();
 
-        var http = new HttpClient(new ForecastHandler()) { BaseAddress = new Uri("https://example.test/") };
+        var http = new HttpClient(forecastHandler ?? new ForecastHandler()) { BaseAddress = new Uri("https://example.test/") };
         return new IrrigationService(store, new OpenMeteoForecastClient(http));
     }
 
-    private sealed class ForecastHandler : HttpMessageHandler
+    private sealed class ForecastHandler(TaskCompletionSource? requestStarted = null) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (requestStarted is not null)
+            {
+                requestStarted.TrySetResult();
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(
                     "{\"hourly\":{\"precipitation\":[0],\"et0_fao_evapotranspiration\":[0]}}",
                     Encoding.UTF8,
                     "application/json")
-            });
+            };
+        }
     }
 }
