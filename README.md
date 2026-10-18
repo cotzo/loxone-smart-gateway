@@ -48,7 +48,7 @@ The old unauthenticated `/Irrigation/...`, `/PhilipsHue/...`, and `/Tuya/...` ro
 
 ### Prometheus metrics
 
-Provider metrics use only bounded labels (`provider`, Hue `resource_type`, and command `outcome`); they deliberately omit mapping, device, bridge, zone, and datapoint IDs.
+Provider metrics use only bounded labels (`provider`, Hue `bridge` display name, Hue `resource_type`, and command `outcome`); they deliberately omit mapping, light, Tuya device, zone, and datapoint IDs.
 
 - `gateway_provider_queue_wait` — histogram, enqueue to send start, including queue pacing.
 - `gateway_provider_event_to_dispatch` — histogram, Loxone state receipt to provider send start.
@@ -58,12 +58,16 @@ Provider metrics use only bounded labels (`provider`, Hue `resource_type`, and c
 - `gateway_provider_queue_pending` — current unique pending commands.
 - `irrigation_weather_observations_committed`, `irrigation_weather_observation_interval` — committed observation count and spacing.
 - `irrigation_weather_observations_stored`, `irrigation_weather_latest_age`, `irrigation_weather_history_span` — retained weather history size, freshness, and time coverage.
+- `irrigation_weather_observed_temperature`, `irrigation_weather_observed_humidity`, `irrigation_weather_observed_pressure`, `irrigation_weather_observed_wind_speed`, `irrigation_weather_observed_light`, `irrigation_weather_observed_rainfall_counter` — latest persisted mapped sensor points.
 - `irrigation_runs_completed`, `irrigation_run_duration`, `irrigation_run_water_applied`, `irrigation_runs_stored` — completed irrigation activity and retained run history.
 - `irrigation_balance_groups` — configured water-balance group count.
 - `irrigation_decision_required`, `irrigation_decision_weather_complete`, `irrigation_decision_forecast_available`, `irrigation_decision_latest_age`, `irrigation_decision_calculation_duration` — latest decision state and calculation latency.
+- `irrigation_decision_rain_observed_24h`, `irrigation_decision_rain_observed_72h`, `irrigation_decision_et0_observed_24h`, `irrigation_decision_rain_forecast`, `irrigation_decision_et0_forecast`, `irrigation_decision_water_deficit` — latest calculated weather and water-balance values.
 - `irrigation_lawn_dry_allowed`, `irrigation_lawn_dry_surface_wetness`, `irrigation_lawn_dry_weather_fresh`, `irrigation_lawn_dry_raining`, `irrigation_lawn_dry_irrigation_running`, `irrigation_lawn_dry_heavy_rain_lockout` — latest Lawn Dry output and main blocking conditions.
 
 Prometheus applies its normal `_bucket`, `_sum`, and `_count` suffixes to histograms. An age gauge is `0` until its first observation/calculation.
+
+An import-ready Grafana dashboard covering per-Hue-bridge latency/queues, irrigation decisions, Lawn Dry status, latest temperature/humidity/pressure/wind/light/rain readings, weather history, and completed runs is available at [docs/grafana/loxone-smart-gateway-overview.json](docs/grafana/loxone-smart-gateway-overview.json). Import it in Grafana and select the Prometheus data source that scrapes this gateway. The dashboard uses regex selectors for unit-bearing histogram/gauge names to tolerate Prometheus exporter unit suffixes.
 
 ## Development
 

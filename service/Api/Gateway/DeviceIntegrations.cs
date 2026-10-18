@@ -154,12 +154,12 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
         catch
         {
             requestDuration.Stop();
-            metrics?.RecordRequestDuration("hue", resourceType, requestDuration.Elapsed.TotalMilliseconds, "failure");
+            metrics?.RecordRequestDuration("hue", resourceType, requestDuration.Elapsed.TotalMilliseconds, "failure", bridge.Name);
             throw;
         }
         requestDuration.Stop();
         var outcome = responseMessage.IsSuccessStatusCode ? "success" : "http_error";
-        metrics?.RecordRequestDuration("hue", resourceType, requestDuration.Elapsed.TotalMilliseconds, outcome);
+        metrics?.RecordRequestDuration("hue", resourceType, requestDuration.Elapsed.TotalMilliseconds, outcome, bridge.Name);
         Log.Information("Hue command response for mapping {mapping} from target {targetId}: HTTP {StatusCode}; request duration {RequestDurationMs:F1} ms", mapping.Name, mapping.TargetId, (int)responseMessage.StatusCode, requestDuration.Elapsed.TotalMilliseconds);
         if (!responseMessage.IsSuccessStatusCode)
             throw new HttpRequestException($"Hue returned {(int)responseMessage.StatusCode} ({responseMessage.StatusCode}): {responseBody}");

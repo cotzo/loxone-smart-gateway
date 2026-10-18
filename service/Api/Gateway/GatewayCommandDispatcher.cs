@@ -40,7 +40,9 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
             var queueKey = $"hue|{mapping.TargetConnectionId}|{resourceType}";
             var targetKey = $"{resourceType}|{mapping.TargetId}";
             var pacing = resourceType == "grouped_light" ? HueGroupedLightInterval : HueLightInterval;
-            GetQueue(queueKey, pacing, "hue", resourceType).Enqueue(targetKey, command);
+            var bridgeName = _store.GetSnapshot().Settings.HueBridges
+                .FirstOrDefault(x => x.Id.Equals(mapping.TargetConnectionId, StringComparison.OrdinalIgnoreCase))?.Name;
+            GetQueue(queueKey, pacing, "hue", resourceType, bridgeName).Enqueue(targetKey, command);
             return;
         }
 
@@ -49,7 +51,7 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
         GetQueue("tuya", TimeSpan.Zero, "tuya", "device").Enqueue($"{mapping.TargetConnectionId}|{mapping.TuyaDp}", command);
     }
 
-    private LatestValueCommandQueue<GatewayCommand> GetQueue(string key, TimeSpan pacing, string provider, string resourceType)
+    private LatestValueCommandQueue<GatewayCommand> GetQueue(string key, TimeSpan pacing, string provider, string resourceType, string? bridge = null)
     {
         lock (_queueSync)
         {
@@ -61,7 +63,8 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
                 key,
                 metrics: _metrics,
                 provider: provider,
-                resourceType: resourceType);
+                resourceType: resourceType,
+                bridge: bridge);
             _queues.Add(key, created);
             return created;
         }
@@ -70,29 +73,37 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
     private async Task SendAsync(GatewayCommand command, CancellationToken cancellationToken)
     {
         var mapping = command.Mapping;
+        var settings = _store.GetSnapshot().Settings;
+        var bridge = mapping.TargetType.Equals("hue", StringComparison.OrdinalIgnoreCase)
+            ? settings.HueBridges.FirstOrDefault(x => x.Id == mapping.TargetConnectionId)
+            : null;
+        var isHue = mapping.TargetType.Equals("hue", StringComparison.OrdinalIgnoreCase);
+        var provider = isHue ? "hue" : "tuya";
+        var resourceType = isHue
+            ? (mapping.HueResourceType.Equals("grouped_light", StringComparison.OrdinalIgnoreCase) ? "grouped_light" : "light")
+            : "device";
+        var bridgeName = bridge?.Name;
         try
         {
-            var settings = _store.GetSnapshot().Settings;
             var convertedValue = MappingValueConverter.Convert(mapping, command.SourceValue);
             Log.Information("Mapping {mapping} converted source value {SourceValue} to JSON {JsonType} {ConvertedValue}",
                 mapping.Name, command.SourceValue, convertedValue.ValueKind, convertedValue.GetRawText());
 
             if (mapping.TargetType.Equals("hue", StringComparison.OrdinalIgnoreCase))
             {
-                var resourceType = mapping.HueResourceType.Equals("grouped_light", StringComparison.OrdinalIgnoreCase) ? "grouped_light" : "light";
-                _metrics.RecordEventToDispatch("hue", resourceType, (DateTimeOffset.UtcNow - command.ReceivedAt).TotalMilliseconds);
-                var bridge = settings.HueBridges.First(x => x.Id == mapping.TargetConnectionId);
-                var applied = await _devices.SendHueAsync(bridge, mapping, convertedValue, cancellationToken, command.ReceivedAt);
+                var selectedBridge = bridge ?? throw new InvalidOperationException($"Hue bridge {mapping.TargetConnectionId} is not configured.");
+                _metrics.RecordEventToDispatch("hue", resourceType, (DateTimeOffset.UtcNow - command.ReceivedAt).TotalMilliseconds, bridgeName);
+                var applied = await _devices.SendHueAsync(selectedBridge, mapping, convertedValue, cancellationToken, command.ReceivedAt);
                 if (!applied)
                 {
-                    _metrics.RecordCommand("hue", resourceType, "invalid");
+                    _metrics.RecordCommand("hue", resourceType, "invalid", bridgeName);
                     Log.Warning("Skipping Loxone value {Value} for mapping {Mapping} to Hue resource {TargetId}; converted value failed Hue validation",
                         command.SourceValue, mapping.Name, mapping.TargetId);
                     return;
                 }
 
-                _metrics.RecordCommand("hue", resourceType, "success");
-                _store.ReportHueStatus(bridge.Id, "Connected; command accepted");
+                _metrics.RecordCommand("hue", resourceType, "success", bridgeName);
+                _store.ReportHueStatus(selectedBridge.Id, "Connected; command accepted");
                 Log.Information("Mapping {Mapping} command accepted by Hue resource {TargetId}; event-to-acceptance delay {EventToAcceptanceMs:F1} ms",
                     mapping.Name, mapping.TargetId, (DateTimeOffset.UtcNow - command.ReceivedAt).TotalMilliseconds);
             }
@@ -112,10 +123,7 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            _metrics.RecordCommand(mapping.TargetType.Equals("hue", StringComparison.OrdinalIgnoreCase) ? "hue" : "tuya",
-                mapping.TargetType.Equals("hue", StringComparison.OrdinalIgnoreCase)
-                    ? (mapping.HueResourceType.Equals("grouped_light", StringComparison.OrdinalIgnoreCase) ? "grouped_light" : "light")
-                    : "device", "failure");
+            _metrics.RecordCommand(provider, resourceType, "failure", bridgeName);
             if (mapping.TargetType.Equals("hue", StringComparison.OrdinalIgnoreCase))
                 _store.ReportHueStatus(mapping.TargetConnectionId, $"Command pending: {ex.Message}");
             else

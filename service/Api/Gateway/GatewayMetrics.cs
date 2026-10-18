@@ -29,35 +29,36 @@ public sealed class GatewayMetrics : IDisposable
         _eventToDispatch = _meter.CreateHistogram<double>("gateway.provider.event.to.dispatch", unit: "ms", description: "Time from Loxone state receipt to provider send start.");
     }
 
-    public void RecordEnqueued(string provider, string resourceType, bool replaced)
+    public void RecordEnqueued(string provider, string resourceType, bool replaced, string? bridge = null)
     {
-        var tags = Tags(provider, resourceType);
+        var tags = Tags(provider, resourceType, bridge: bridge);
         if (replaced) _coalesced.Add(1, tags);
         else _pending.Add(1, tags);
     }
 
-    public void RecordDequeued(string provider, string resourceType) => _pending.Add(-1, Tags(provider, resourceType));
+    public void RecordDequeued(string provider, string resourceType, string? bridge = null) => _pending.Add(-1, Tags(provider, resourceType, bridge: bridge));
 
-    public void RecordRetry(string provider, string resourceType) => _retries.Add(1, Tags(provider, resourceType));
+    public void RecordRetry(string provider, string resourceType, string? bridge = null) => _retries.Add(1, Tags(provider, resourceType, bridge: bridge));
 
-    public void RecordCommand(string provider, string resourceType, string outcome) =>
-        _commands.Add(1, Tags(provider, resourceType, ("outcome", outcome)));
+    public void RecordCommand(string provider, string resourceType, string outcome, string? bridge = null) =>
+        _commands.Add(1, Tags(provider, resourceType, ("outcome", outcome), bridge));
 
-    public void RecordFailure(string provider, string resourceType) => _failures.Add(1, Tags(provider, resourceType));
+    public void RecordFailure(string provider, string resourceType, string? bridge = null) => _failures.Add(1, Tags(provider, resourceType, bridge: bridge));
 
-    public void RecordQueueWait(string provider, string resourceType, double milliseconds) =>
-        _queueWait.Record(Math.Max(0, milliseconds), Tags(provider, resourceType));
+    public void RecordQueueWait(string provider, string resourceType, double milliseconds, string? bridge = null) =>
+        _queueWait.Record(Math.Max(0, milliseconds), Tags(provider, resourceType, bridge: bridge));
 
-    public void RecordRequestDuration(string provider, string resourceType, double milliseconds, string outcome) =>
-        _networkDuration.Record(Math.Max(0, milliseconds), Tags(provider, resourceType, ("outcome", outcome)));
+    public void RecordRequestDuration(string provider, string resourceType, double milliseconds, string outcome, string? bridge = null) =>
+        _networkDuration.Record(Math.Max(0, milliseconds), Tags(provider, resourceType, ("outcome", outcome), bridge));
 
-    public void RecordEventToDispatch(string provider, string resourceType, double milliseconds) =>
-        _eventToDispatch.Record(Math.Max(0, milliseconds), Tags(provider, resourceType));
+    public void RecordEventToDispatch(string provider, string resourceType, double milliseconds, string? bridge = null) =>
+        _eventToDispatch.Record(Math.Max(0, milliseconds), Tags(provider, resourceType, bridge: bridge));
 
-    private static TagList Tags(string provider, string resourceType, (string Key, string Value)? extra = null)
+    private static TagList Tags(string provider, string resourceType, (string Key, string Value)? extra = null, string? bridge = null)
     {
         var tags = new TagList { { "provider", provider }, { "resource_type", resourceType } };
         if (extra is { } item) tags.Add(item.Key, item.Value);
+        if (!string.IsNullOrWhiteSpace(bridge) && provider == "hue") tags.Add("bridge", bridge);
         return tags;
     }
 

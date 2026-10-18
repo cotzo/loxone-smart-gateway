@@ -252,7 +252,7 @@ public sealed class IrrigationService
             _forecastAvailable,
             decisionSummary);
         calculationTimer.Stop();
-        _metrics.RecordDecision(result.Irrigate, result.LocalDataComplete, result.ForecastAvailable, calculationTimer.Elapsed.TotalMilliseconds);
+        _metrics.RecordDecision(result, calculationTimer.Elapsed.TotalMilliseconds);
         return result;
     }
 
