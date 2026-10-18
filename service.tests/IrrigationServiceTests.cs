@@ -49,11 +49,40 @@ public sealed class IrrigationServiceTests
         var end = start.AddDays(1);
         var gap = TimeSpan.FromMinutes(30);
 
-        Assert.True(IrrigationService.HasCompleteDayCoverage(
-            new[] { Obs(0, start.AddMinutes(5)), Obs(0, end.AddMinutes(-5)) }, start, end, gap));
+        var regularSamples = Enumerable.Range(0, 287).Select(i => Obs(0, start.AddMinutes(5 + i * 5))).ToList();
+        Assert.True(IrrigationService.HasCompleteDayCoverage(regularSamples, start, end, gap));
 
         Assert.False(IrrigationService.HasCompleteDayCoverage(
             new[] { Obs(0, start.AddHours(12)), Obs(0, end.AddMinutes(-5)) }, start, end, gap));
+    }
+
+    [Fact]
+    public void CompleteDayCoverage_RejectsLongInternalGapsAndInsufficientCoverageFraction()
+    {
+        var start = DateTimeOffset.Parse("2026-08-20T00:00:00Z");
+        var end = start.AddDays(1);
+        var regular = Enumerable.Range(0, 287).Where(i => i < 100 || i > 250)
+            .Select(i => Obs(0, start.AddMinutes(5 + i * 5))).ToList();
+        Assert.False(IrrigationService.HasCompleteDayCoverage(regular, start, end, TimeSpan.FromMinutes(30)));
+
+        var dense = Enumerable.Range(0, 287).Select(i => Obs(0, start.AddMinutes(5 + i * 5))).ToList();
+        Assert.False(IrrigationService.HasCompleteDayCoverage(dense, start, end, TimeSpan.FromMinutes(30),
+            TimeSpan.FromMinutes(15), minimumCoverageFraction: 0.999));
+    }
+
+    [Theory]
+    [InlineData("2026-03-29", 23)]
+    [InlineData("2026-10-25", 25)]
+    public void CompleteDayCoverage_UsesActualDstDayLength(string dateText, int expectedHours)
+    {
+        var timezone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Bucharest");
+        var date = DateOnly.Parse(dateText);
+        var start = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(date.ToDateTime(TimeOnly.MinValue), timezone), TimeSpan.Zero);
+        var end = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(date.AddDays(1).ToDateTime(TimeOnly.MinValue), timezone), TimeSpan.Zero);
+        Assert.Equal(expectedHours, (end - start).TotalHours);
+        var count = (int)((end - start).TotalMinutes / 5) - 1;
+        var samples = Enumerable.Range(0, count).Select(i => Obs(0, start.AddMinutes(5 + i * 5))).ToList();
+        Assert.True(IrrigationService.HasCompleteDayCoverage(samples, start, end, TimeSpan.FromMinutes(30)));
     }
 
     [Fact]
@@ -65,7 +94,8 @@ public sealed class IrrigationServiceTests
             var service = CreateService(stateFile, new Dictionary<string, string?>
             {
                 ["Api:IrrigationConfiguration:TimeZoneId"] = "Europe/Bucharest",
-                ["Api:IrrigationConfiguration:CompletedDayEdgeGapMinutes"] = "30"
+                ["Api:IrrigationConfiguration:CompletedDayEdgeGapMinutes"] = "30",
+                ["Api:IrrigationConfiguration:MaximumObservationGapMinutes"] = "180"
             });
             var timezone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Bucharest");
             var date = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timezone).DateTime).AddDays(-2);
@@ -79,7 +109,9 @@ public sealed class IrrigationServiceTests
             Assert.Null(pending.LastBalancedLocalDate);
             Assert.Contains(pending.BalanceDayStatus, x => x.LocalDate == date && x.Status == "Pending");
 
-            await service.AddObservationAsync(Obs(0, start.AddMinutes(5)), CancellationToken.None);
+            for (var time = start.AddMinutes(5); time < end.AddMinutes(-5); time = time.AddHours(2))
+                await service.AddObservationAsync(Obs(0, time), CancellationToken.None);
+            await service.AddObservationAsync(Obs(0, end.AddMinutes(-5)), CancellationToken.None);
             var repaired = await service.GetStoredDataAsync(CancellationToken.None);
             Assert.Equal(date, repaired.LastBalancedLocalDate);
             Assert.DoesNotContain(repaired.BalanceDayStatus, x => x.LocalDate == date);
@@ -130,6 +162,7 @@ public sealed class IrrigationServiceTests
         var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{\"LawnEast\":5},\"IrrigationRuns\":[]}");
         try
         {
+            SeedCompleteRecentWeather(stateFile, new Dictionary<string, double> { ["LawnEast"] = 5 });
             var service = CreateService(stateFile, new Dictionary<string, string?>
             {
                 ["Api:IrrigationConfiguration:IrrigationTriggerMm"] = "5",
@@ -167,6 +200,7 @@ public sealed class IrrigationServiceTests
         var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{\"V6\":15},\"IrrigationRuns\":[]}");
         try
         {
+            SeedCompleteRecentWeather(stateFile, new Dictionary<string, double> { ["V6"] = 15 });
             var service = CreateService(stateFile, new Dictionary<string, string?>
             {
                 ["Api:IrrigationConfiguration:IrrigationTriggerMm"] = "5",
@@ -187,6 +221,21 @@ public sealed class IrrigationServiceTests
 
     private static WeatherObservation Obs(double rain, DateTimeOffset timestamp) =>
         new(20, 50, 1000, 5, 10000, rain, timestamp);
+
+    private static void SeedCompleteRecentWeather(string stateFile, Dictionary<string, double> balanceDeficitMm)
+    {
+        var end = DateTimeOffset.UtcNow;
+        var start = end.AddHours(-24);
+        var observations = Enumerable.Range(0, 145)
+            .Select(i => Obs(0, start.AddMinutes(i * 10)))
+            .ToArray();
+        File.WriteAllText(stateFile, JsonSerializer.Serialize(new
+        {
+            Observations = observations,
+            BalanceDeficitMm = balanceDeficitMm,
+            IrrigationRuns = Array.Empty<IrrigationRun>()
+        }));
+    }
 
     private static string TempState(string json)
     {

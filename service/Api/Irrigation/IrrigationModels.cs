@@ -24,6 +24,8 @@ public sealed class IrrigationConfiguration
     public int MaximumTimestampSkewMinutes { get; set; } = 5;
     public int WeatherSourceHealthTimeoutMinutes { get; set; } = 2;
     public int MaximumObservationEdgeGapMinutes { get; set; } = 15;
+    public int MaximumObservationGapMinutes { get; set; } = 15;
+    public double MinimumWeatherCoverageFraction { get; set; } = 0.9;
     public int CompletedDayEdgeGapMinutes { get; set; } = 30;
     public string TimeZoneId { get; set; } = "Europe/Bucharest";
     public string StateFile { get; set; } = "data/irrigation-state.json";
