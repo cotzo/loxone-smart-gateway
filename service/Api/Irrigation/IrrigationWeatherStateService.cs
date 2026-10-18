@@ -4,12 +4,30 @@ using Serilog;
 
 namespace loxone.smart.gateway.Api.Irrigation;
 
-public sealed class IrrigationWeatherStateService(GatewayStateStore store, WeatherIngestionService ingestion)
+public sealed class IrrigationWeatherStateService(GatewayStateStore store, WeatherIngestionService ingestion) : BackgroundService
 {
     private static readonly string[] RequiredFields = ["temperature", "humidity", "pressure", "wind", "light", "rainfall"];
+    private static readonly TimeSpan SampleInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MaximumReadingAge = TimeSpan.FromMinutes(15);
     private readonly object _sync = new();
     private readonly Dictionary<string, (string ServerId, string Uuid, double Value, DateTimeOffset ReceivedAt)> _latest = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _commitGate = new(1, 1);
+    private DateTimeOffset? _lastCommittedAt;
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                try { await CommitIfDueAsync(stoppingToken); }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
+                catch (Exception ex) { Log.Error(ex, "Failed to persist scheduled Loxone weather observation"); }
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+    }
 
     public async Task ObserveStateAsync(string serverId, string uuid, string raw, CancellationToken cancellationToken)
     {
@@ -23,29 +41,61 @@ public sealed class IrrigationWeatherStateService(GatewayStateStore store, Weath
             return;
         }
 
-        Dictionary<string, double>? sample = null;
         lock (_sync)
         {
             foreach (var mapping in matches)
                 if (RequiredFields.Contains(mapping.Field, StringComparer.OrdinalIgnoreCase))
                     _latest[mapping.Field] = (mapping.ServerId, Normalize(mapping.StateUuid), value, DateTimeOffset.UtcNow);
-
-            var configured = RequiredFields.All(field => mappings.Any(x => x.Field.Equals(field, StringComparison.OrdinalIgnoreCase) &&
-                !string.IsNullOrWhiteSpace(x.ServerId) && !string.IsNullOrWhiteSpace(x.StateUuid)));
-            if (configured && RequiredFields.All(field => _latest.TryGetValue(field, out var reading) && DateTimeOffset.UtcNow - reading.ReceivedAt <= TimeSpan.FromMinutes(15) &&
-                mappings.Any(mapping => mapping.Field.Equals(field, StringComparison.OrdinalIgnoreCase) &&
-                    mapping.ServerId.Equals(reading.ServerId, StringComparison.OrdinalIgnoreCase) && Normalize(mapping.StateUuid).Equals(reading.Uuid, StringComparison.OrdinalIgnoreCase))))
-                sample = RequiredFields.ToDictionary(field => field, field => _latest[field].Value, StringComparer.OrdinalIgnoreCase);
         }
 
-        if (sample is null) return;
+        // Save the first complete snapshot immediately. Later sensor changes only refresh
+        // the in-memory readings; the timer persists a combined snapshot every five minutes.
+        try { await CommitIfDueAsync(cancellationToken); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex) { Log.Error(ex, "Failed to persist mapped Loxone weather observation"); }
+    }
+
+    private async Task CommitIfDueAsync(CancellationToken cancellationToken)
+    {
         await _commitGate.WaitAsync(cancellationToken);
         try
         {
+            Dictionary<string, double>? sample;
+            DateTimeOffset sampleTime;
+            DateTimeOffset? previousCommit;
+            var mappings = store.GetSnapshot().Settings.Irrigation.WeatherStateMappings;
+            lock (_sync)
+            {
+                sampleTime = DateTimeOffset.UtcNow;
+                if (_lastCommittedAt is not null && sampleTime - _lastCommittedAt.Value < SampleInterval)
+                    return;
+
+                var configured = RequiredFields.All(field => mappings.Any(x => x.Field.Equals(field, StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(x.ServerId) && !string.IsNullOrWhiteSpace(x.StateUuid)));
+                var readingsValid = configured && RequiredFields.All(field => _latest.TryGetValue(field, out var reading) &&
+                    sampleTime - reading.ReceivedAt <= MaximumReadingAge &&
+                    mappings.Any(mapping => mapping.Field.Equals(field, StringComparison.OrdinalIgnoreCase) &&
+                        mapping.ServerId.Equals(reading.ServerId, StringComparison.OrdinalIgnoreCase) &&
+                        Normalize(mapping.StateUuid).Equals(reading.Uuid, StringComparison.OrdinalIgnoreCase)));
+                if (!readingsValid) return;
+
+                sample = RequiredFields.ToDictionary(field => field, field => _latest[field].Value, StringComparer.OrdinalIgnoreCase);
+                previousCommit = _lastCommittedAt;
+                _lastCommittedAt = sampleTime;
+            }
+
             var observation = new WeatherObservation(sample["temperature"], sample["humidity"], sample["pressure"],
                 sample["wind"], sample["light"], sample["rainfall"]);
-            await ingestion.CommitMappedAsync(observation, cancellationToken);
-            Log.Information("Committed mapped Loxone weather observation from {ServerId}: temperature={Temperature}°C, humidity={Humidity}%, pressure={Pressure} hPa, wind={Wind} km/h, light={Light} lux, rainfall counter={Rainfall} mm", serverId,
+            try
+            {
+                await ingestion.CommitMappedAsync(observation, cancellationToken);
+            }
+            catch
+            {
+                lock (_sync) _lastCommittedAt = previousCommit;
+                throw;
+            }
+            Log.Information("Committed mapped Loxone weather observation: temperature={Temperature}°C, humidity={Humidity}%, pressure={Pressure} hPa, wind={Wind} km/h, light={Light} lux, rainfall counter={Rainfall} mm",
                 observation.TemperatureC, observation.HumidityPct, observation.PressureHpa, observation.WindSpeedKmh, observation.LightLux, observation.RainfallMm);
         }
         finally { _commitGate.Release(); }

@@ -54,6 +54,7 @@ builder.Services.AddSingleton<LoxoneIntegration>();
 builder.Services.AddSingleton<DeviceIntegrations>();
 builder.Services.AddHostedService<GatewayRuntimeService>();
 builder.Services.AddHostedService<IrrigationDurationSyncService>();
+builder.Services.AddHostedService<IrrigationWeatherStateService>(provider => provider.GetRequiredService<IrrigationWeatherStateService>());
 
 builder.Services.AddHttpClient("HueDynamic")
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
