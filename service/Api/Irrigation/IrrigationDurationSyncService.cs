@@ -10,6 +10,7 @@ namespace loxone.smart.gateway.Api.Irrigation;
 public sealed class IrrigationDurationSyncService(
     GatewayStateStore store,
     IrrigationService irrigation,
+    IrrigationWeatherStateService weatherState,
     LoxoneIntegration loxone) : BackgroundService
 {
     private const string OffValue = "-1";
@@ -39,7 +40,7 @@ public sealed class IrrigationDurationSyncService(
             .ToList();
         if (zones.Count == 0) return;
 
-        var decision = await irrigation.CalculateAsync(cancellationToken);
+        var decision = await irrigation.CalculateAsync(cancellationToken, weatherState.GetSourceStatus().Healthy);
         var results = decision.Zones.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
         var durations = zones.ToDictionary(zone => zone.LoxoneZoneId,
             zone => decision.LocalDataComplete && results.TryGetValue(zone.Id, out var result) ? result.RuntimeSeconds : 0,

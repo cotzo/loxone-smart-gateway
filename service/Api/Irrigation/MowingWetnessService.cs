@@ -5,12 +5,14 @@ public sealed class LawnDryService
     private readonly IrrigationService _irrigation;
     private readonly IrrigationRunTracker _runTracker;
     private readonly IrrigationMetrics _metrics;
+    private readonly IrrigationWeatherStateService _weatherState;
 
-    public LawnDryService(IrrigationService irrigation, IrrigationRunTracker runTracker, IrrigationMetrics metrics)
+    public LawnDryService(IrrigationService irrigation, IrrigationRunTracker runTracker, IrrigationMetrics metrics, IrrigationWeatherStateService weatherState)
     {
         _irrigation = irrigation;
         _runTracker = runTracker;
         _metrics = metrics;
+        _weatherState = weatherState;
     }
 
     public async Task<LawnDryStatus> GetStatusAsync(CancellationToken cancellationToken)
@@ -58,7 +60,8 @@ public sealed class LawnDryService
         var weatherFresh = latest is not null &&
                            latest >= now.AddMinutes(-Math.Max(1, options.MowingMaximumWeatherAgeMinutes));
         var historyReady = HasSufficientWeatherHistory(observations, now, options);
-        var weatherDataFresh = weatherFresh && historyReady;
+        var sourceHealthy = _weatherState.GetSourceStatus().Healthy;
+        var weatherDataFresh = weatherFresh && historyReady && sourceHealthy;
 
         var threshold = Math.Max(0, options.LawnDryWetnessThresholdMm);
         var wetnessAllowed = wetnessMm <= threshold;
@@ -66,8 +69,8 @@ public sealed class LawnDryService
         var latestText = latest?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "no saved sample";
         var checks = new[]
         {
-            new IrrigationDecisionCheck("Weather freshness", weatherFresh,
-                weatherFresh ? $"Latest committed sample: {latestText}; limit {Math.Max(1, options.MowingMaximumWeatherAgeMinutes)} min." : $"Latest committed sample is missing or older than {Math.Max(1, options.MowingMaximumWeatherAgeMinutes)} min ({latestText})."),
+            new IrrigationDecisionCheck("Weather freshness", weatherFresh && sourceHealthy,
+                !sourceHealthy ? _weatherState.GetSourceStatus().Summary : weatherFresh ? $"Latest committed sample: {latestText}; limit {Math.Max(1, options.MowingMaximumWeatherAgeMinutes)} min." : $"Latest committed sample is missing or older than {Math.Max(1, options.MowingMaximumWeatherAgeMinutes)} min ({latestText})."),
             new IrrigationDecisionCheck("Weather history", historyReady,
                 historyReady ? "At least two ordered weather samples are available." : "At least two ordered, sufficiently recent weather samples are required."),
             new IrrigationDecisionCheck("Surface wetness", wetnessAllowed,

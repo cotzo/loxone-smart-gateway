@@ -188,6 +188,7 @@ public sealed class LoxoneIntegration
                 }
                 await keepAliveDelay;
                 await client.KeepAliveAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                status("Connected; receiving live state");
 
                 var lastEventMs = Interlocked.Read(ref lastEventTableUnixMs);
                 sessionLog.Information(

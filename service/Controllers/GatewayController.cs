@@ -13,7 +13,8 @@ public sealed class GatewayController(
     IrrigationService irrigation,
     IrrigationRunTracker irrigationRunTracker,
     LawnDryService lawnDryService,
-    IrrigationLoxoneService irrigationLoxone) : ControllerBase
+    IrrigationLoxoneService irrigationLoxone,
+    IrrigationWeatherStateService irrigationWeather) : ControllerBase
 {
     [HttpPost("login")]
     public IActionResult Login([FromBody] LoginRequest request, [FromServices] IConfiguration configuration)
@@ -167,7 +168,7 @@ public sealed class GatewayController(
     [HttpGet("irrigation/status")]
     public async Task<ActionResult<IrrigationDashboardSnapshot>> GetIrrigationStatus(CancellationToken cancellationToken)
     {
-        var decision = await irrigation.CalculateAsync(cancellationToken);
+        var decision = await irrigation.CalculateAsync(cancellationToken, irrigationWeather.GetSourceStatus().Healthy);
         var stored = await irrigation.GetStoredDataAsync(cancellationToken);
         var activeZoneIds = await irrigationRunTracker.GetActiveZoneIdsAsync(cancellationToken);
         var lawnDry = await lawnDryService.GetStatusAsync(cancellationToken);
@@ -176,7 +177,8 @@ public sealed class GatewayController(
             stored,
             activeZoneIds,
             decision,
-            lawnDry));
+            lawnDry,
+            irrigationWeather.GetSourceStatus()));
     }
 
     [HttpPut("irrigation")]
