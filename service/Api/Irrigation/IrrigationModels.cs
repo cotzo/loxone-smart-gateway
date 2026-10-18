@@ -7,7 +7,8 @@ public sealed record WeatherObservation(
     double WindSpeedKmh,
     double LightLux,
     double RainfallMm,
-    DateTimeOffset? Timestamp = null);
+    DateTimeOffset? Timestamp = null,
+    bool RainfallTimingUncertain = false);
 
 public sealed class IrrigationConfiguration
 {

@@ -6,6 +6,20 @@ namespace service.tests;
 public sealed class MowingWetnessServiceTests
 {
     [Fact]
+    public void UncertainRainfallIntervalIsDetectedWhenItOverlapsSafetyWindow()
+    {
+        var start = DateTimeOffset.Parse("2026-10-18T06:00:00Z");
+        var observations = new[]
+        {
+            new WeatherObservation(20, 50, 1000, 5, 10000, 18, start),
+            new WeatherObservation(20, 50, 1000, 5, 10000, 1, start.AddHours(1), RainfallTimingUncertain: true),
+            new WeatherObservation(20, 50, 1000, 5, 10000, 1.5, start.AddHours(1).AddMinutes(5))
+        };
+
+        Assert.True(LawnDryService.HasUncertainRainfallInterval(observations, start.AddMinutes(30), start.AddHours(1).AddMinutes(1)));
+        Assert.False(LawnDryService.HasUncertainRainfallInterval(observations, start.AddHours(1).AddMinutes(5), start.AddHours(2)));
+    }
+    [Fact]
     public void Drying_IsFasterInSunnyHotDryWindyWeather()
     {
         var options = new IrrigationConfiguration { LuxPerWattM2 = 120 };
