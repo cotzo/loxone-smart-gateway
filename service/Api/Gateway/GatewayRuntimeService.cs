@@ -72,7 +72,7 @@ public sealed class GatewayRuntimeService(
                     (uuid, value) =>
                     {
                         var receivedAt = DateTimeOffset.UtcNow;
-                        Log.Information("Received mapped Loxone state {uuid} from {server} with value {value} in session {SessionAttempt}", uuid, server.Name, value, sessionAttempt);
+                        Log.Debug("Received mapped Loxone state {uuid} from {server} with value {value} in session {SessionAttempt}", uuid, server.Name, value, sessionAttempt);
                         if (!channel.Writer.TryWrite((uuid, value, receivedAt)))
                             Log.Warning("Could not queue Loxone state {uuid} from {server} in session {SessionAttempt}; the session processor is no longer accepting events", uuid, server.Name, sessionAttempt);
                     },

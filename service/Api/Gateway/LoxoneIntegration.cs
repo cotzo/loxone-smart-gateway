@@ -139,6 +139,9 @@ public sealed class LoxoneIntegration
             Interlocked.Exchange(ref lastEventTableUnixMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             if (tableNumber <= 3)
             {
+                var stateCount = args.States.Count();
+                sessionLog.Information("Loxone event table {tableNumber} received with {stateCount} states",
+                    tableNumber, stateCount);
                 var sampleStates = args.States.Take(3).Select(state =>
                 {
                     var members = state.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
@@ -146,8 +149,8 @@ public sealed class LoxoneIntegration
                         .Concat(state.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance).Select(field => field.Name));
                     return $"{state.GetType().Name} members=[{string.Join(",", members)}] uuid={ReadProperty(state, "Uuid", "UUID", "Id")}";
                 });
-                sessionLog.Information("Loxone event table {tableNumber} received with {stateCount} states; sample: {sampleStates}",
-                    tableNumber, args.States.Count(), string.Join("; ", sampleStates));
+                sessionLog.Debug("Loxone event table {tableNumber} sample: {sampleStates}",
+                    tableNumber, string.Join("; ", sampleStates));
             }
 
             foreach (var state in args.States)
@@ -160,7 +163,7 @@ public sealed class LoxoneIntegration
                     .Select(property => $"{property.Name}={property.GetValue(state) ?? "null"}")
                     .Concat(state.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance)
                         .Select(field => $"{field.Name}={field.GetValue(state) ?? "null"}"));
-                sessionLog.Information("Loxone mapped state payload {uuid}: {stateType} {members}", uuid, state.GetType().FullName, string.Join(", ", members));
+                sessionLog.Debug("Loxone mapped state payload {uuid}: {stateType} {members}", uuid, state.GetType().FullName, string.Join(", ", members));
                 if (raw is null) continue;
                 onValue(uuid, raw.ToString() ?? string.Empty);
             }
