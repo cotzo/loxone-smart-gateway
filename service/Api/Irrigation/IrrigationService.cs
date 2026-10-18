@@ -11,6 +11,7 @@ public sealed class IrrigationService
     private readonly SemaphoreSlim _gate = new(1, 1);
     private IrrigationState _state;
     private ForecastSummary? _cachedForecast;
+    private bool _forecastAvailable;
     private DateTimeOffset _forecastRefreshAfter;
     private DateTimeOffset _forecastValidUntil;
 
@@ -29,6 +30,32 @@ public sealed class IrrigationService
 
     public void UpdateConfiguration(IrrigationConfiguration configuration) =>
         Volatile.Write(ref _options, CloneConfiguration(configuration));
+
+    public IrrigationConfiguration GetConfigurationSnapshot() =>
+        CloneConfiguration(Volatile.Read(ref _options));
+
+    public async Task<IrrigationStoredData> GetStoredDataAsync(CancellationToken cancellationToken, int observationLimit = 100, int runLimit = 50)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (CleanupIrrigationRuns(now))
+                await PersistAsync(cancellationToken);
+            var observations = _state.Observations.OrderBy(x => x.Timestamp).ToList();
+            var runs = _state.IrrigationRuns.OrderByDescending(x => x.EndedAt).ToList();
+            return new IrrigationStoredData(
+                observationLimit <= 0 ? observations : observations.TakeLast(observationLimit).ToList(),
+                new Dictionary<string, double>(_state.BalanceDeficitMm, StringComparer.OrdinalIgnoreCase),
+                _state.LastBalancedLocalDate,
+                runLimit <= 0 ? runs : runs.Take(runLimit).ToList(),
+                observations.Count);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     public WeatherObservation? GetLatestObservation() =>
         _state.Observations.OrderByDescending(x => x.Timestamp).FirstOrDefault();
@@ -67,16 +94,12 @@ public sealed class IrrigationService
         string zoneId,
         int runtimeSeconds,
         string eventId,
-        string type,
         CancellationToken cancellationToken)
     {
         if (runtimeSeconds <= 0 || string.IsNullOrWhiteSpace(eventId)) return false;
 
         var zone = _options.Zones.FirstOrDefault(x => string.Equals(x.Id, zoneId, StringComparison.OrdinalIgnoreCase));
         if (zone is null || zone.ApplicationRateMmPerHour <= 0) return false;
-
-        var normalizedType = NormalizeRunType(type);
-        if (normalizedType is null) return false;
 
         await _gate.WaitAsync(cancellationToken);
         try
@@ -90,18 +113,14 @@ public sealed class IrrigationService
             var appliedMm = runtimeSeconds / 3600.0 * zone.ApplicationRateMmPerHour;
             var group = ResolveBalanceGroup(zone);
 
-            // Rinse/manual runs are recorded for history but do not alter the irrigation water balance.
-            if (string.Equals(normalizedType, "Irrigation", StringComparison.OrdinalIgnoreCase))
-            {
-                _state.BalanceDeficitMm.TryGetValue(group, out var current);
-                _state.BalanceDeficitMm[group] = Math.Max(0, current - appliedMm);
-            }
+            _state.BalanceDeficitMm.TryGetValue(group, out var current);
+            _state.BalanceDeficitMm[group] = Math.Max(0, current - appliedMm);
 
             _state.IrrigationRuns.Add(new IrrigationRun(
                 eventId,
                 zone.Id,
                 group,
-                normalizedType,
+                "Irrigation",
                 runtimeSeconds,
                 Math.Round(appliedMm, 3),
                 startedAt,
@@ -167,26 +186,44 @@ public sealed class IrrigationService
         var effectiveForecastRain = forecast.RainMm * options.EffectiveRainFactor * options.ForecastRainWeight;
 
         var zoneResults = new List<IrrigationZoneResult>();
-        foreach (var group in GetConfiguredGroups())
+        foreach (var group in options.Zones.GroupBy(ResolveBalanceGroup, StringComparer.OrdinalIgnoreCase))
         {
             balances.TryGetValue(group.Key, out var accumulated);
             var required = Math.Max(0, accumulated - effectiveForecastRain);
-            var shouldRun = required >= _options.IrrigationTriggerMm;
+            var shouldRun = required >= options.IrrigationTriggerMm;
             var totalRate = group.Sum(x => Math.Max(0, x.ApplicationRateMmPerHour));
-            var runtime = shouldRun && totalRate > 0
+            var calculatedRuntime = shouldRun && totalRate > 0
                 ? (int)Math.Round(required / totalRate * 3600)
                 : 0;
-            runtime = Math.Clamp(runtime, 0, Math.Max(0, _options.MaximumZoneRuntimeSeconds));
+            var runtime = Math.Clamp(calculatedRuntime, 0, Math.Max(0, options.MaximumZoneRuntimeSeconds));
+            var capped = runtime < calculatedRuntime;
+            var summary = !shouldRun
+                ? $"Required water {required:F2} mm is below the {options.IrrigationTriggerMm:F2} mm trigger."
+                : totalRate <= 0
+                    ? "No positive application rate is configured for this balance group."
+                    : capped
+                        ? $"Required water {required:F2} mm meets the trigger; calculated runtime {calculatedRuntime} s is capped at {runtime} s."
+                        : $"Required water {required:F2} mm meets the trigger; {totalRate:F2} mm/h combined application rate gives {runtime} s runtime.";
 
             // All circuits in one balance group run the same duration. Their physical application
             // rates add together to replenish the shared root zone.
             foreach (var zone in group)
-                zoneResults.Add(new IrrigationZoneResult(zone.Id, group.Key, Math.Round(required, 2), runtime));
+                zoneResults.Add(new IrrigationZoneResult(
+                    zone.Id, group.Key, Math.Round(required, 2), runtime,
+                    Math.Round(accumulated, 2), Math.Round(effectiveForecastRain, 2),
+                    options.IrrigationTriggerMm, Math.Round(totalRate, 2), calculatedRuntime,
+                    capped, shouldRun, summary));
         }
 
         var maxDeficit = balances.Count == 0 ? 0 : balances.Values.Max();
+        var irrigate = zoneResults.Any(x => x.RuntimeSeconds > 0);
+        var decisionSummary = irrigate
+            ? $"Watering is recommended for {zoneResults.Count(x => x.RuntimeSeconds > 0)} zone(s)."
+            : zoneResults.Count == 0
+                ? "No irrigation zones are configured."
+                : "No zones currently require watering at the configured trigger.";
         return new IrrigationResult(
-            zoneResults.Any(x => x.RuntimeSeconds > 0),
+            irrigate,
             localDataComplete,
             Math.Round(et0, 2),
             Math.Round(rain24, 2),
@@ -195,7 +232,10 @@ public sealed class IrrigationService
             Math.Round(forecast.Et0Mm, 2),
             Math.Round(maxDeficit, 2),
             zoneResults,
-            now);
+            now,
+            Math.Round(effectiveForecastRain, 2),
+            _forecastAvailable,
+            decisionSummary);
     }
 
     private bool AccumulateCompletedDays(DateTimeOffset nowUtc)
@@ -252,6 +292,7 @@ public sealed class IrrigationService
         {
             var options = Volatile.Read(ref _options);
             _cachedForecast = await _forecast.GetForecastAsync(options, cancellationToken);
+            _forecastAvailable = true;
             _forecastRefreshAfter = now.AddMinutes(30);
             _forecastValidUntil = now.AddHours(Math.Max(1, options.ForecastHours));
             return _cachedForecast;
@@ -259,8 +300,13 @@ public sealed class IrrigationService
         catch (Exception ex)
         {
             Log.Warning(ex, "Unable to retrieve irrigation forecast; continuing without forecast adjustment");
-            if (_cachedForecast is not null && now < _forecastValidUntil) return _cachedForecast;
+            if (_cachedForecast is not null && now < _forecastValidUntil)
+            {
+                _forecastAvailable = true;
+                return _cachedForecast;
+            }
             _cachedForecast = null;
+            _forecastAvailable = false;
             _forecastRefreshAfter = DateTimeOffset.MinValue;
             _forecastValidUntil = DateTimeOffset.MinValue;
             return new ForecastSummary(0, 0);
@@ -291,15 +337,6 @@ public sealed class IrrigationService
             Log.Warning("Unknown irrigation timezone {timezone}; using UTC", _options.TimeZoneId);
             return TimeZoneInfo.Utc;
         }
-    }
-
-    private static string? NormalizeRunType(string type)
-    {
-        if (string.IsNullOrWhiteSpace(type)) return "Irrigation";
-        if (type.Equals("Irrigation", StringComparison.OrdinalIgnoreCase)) return "Irrigation";
-        if (type.Equals("Rinse", StringComparison.OrdinalIgnoreCase)) return "Rinse";
-        if (type.Equals("Manual", StringComparison.OrdinalIgnoreCase)) return "Manual";
-        return null;
     }
 
     private bool CleanupIrrigationRuns(DateTimeOffset now) =>

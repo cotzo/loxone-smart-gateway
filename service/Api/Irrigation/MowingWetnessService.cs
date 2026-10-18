@@ -1,22 +1,24 @@
-using System.Text.Json;
-
 namespace loxone.smart.gateway.Api.Irrigation;
 
 public sealed class MowingWetnessService
 {
-    private readonly IrrigationConfiguration _options;
+    private readonly IrrigationService _irrigation;
     private readonly IrrigationRunTracker _runTracker;
 
-    public MowingWetnessService(IConfiguration configuration, IrrigationRunTracker runTracker)
+    public MowingWetnessService(IrrigationService irrigation, IrrigationRunTracker runTracker)
     {
-        _options = configuration.GetSection("Api:IrrigationConfiguration").Get<IrrigationConfiguration>() ?? new();
+        _irrigation = irrigation;
         _runTracker = runTracker;
     }
 
     public async Task<MowingStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
+        var options = _irrigation.GetConfigurationSnapshot();
+        // Use complete retained history; truncating the dashboard's recent-sample view would
+        // undercount rain/irrigation and distort the mowing wetness estimate.
+        var state = await _irrigation.GetStoredDataAsync(cancellationToken, observationLimit: 0, runLimit: 0);
         var now = DateTimeOffset.UtcNow;
-        var lawnZoneIds = _options.Zones
+        var lawnZoneIds = options.Zones
             .Where(x => string.Equals(x.Type, "Lawn", StringComparison.OrdinalIgnoreCase))
             .Select(x => x.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -25,13 +27,12 @@ public sealed class MowingWetnessService
         // tracker's gate. Only after that transition is complete do we read persisted run history,
         // so the snapshot cannot miss both the active run and its completed history record.
         var irrigationRunning = await _runTracker.IsAnyZoneActiveAsync(lawnZoneIds, cancellationToken);
-        var state = LoadState();
         var observations = state.Observations
             .Where(x => x.Timestamp is not null)
             .OrderBy(x => x.Timestamp)
             .ToList();
 
-        var lookback = TimeSpan.FromHours(Math.Max(6, _options.MowingWetnessLookbackHours));
+        var lookback = TimeSpan.FromHours(Math.Max(6, options.MowingWetnessLookbackHours));
         var cutoff = now - lookback;
         var baseline = observations.LastOrDefault(x => x.Timestamp < cutoff);
         var window = new List<WeatherObservation>();
@@ -43,22 +44,39 @@ public sealed class MowingWetnessService
             .OrderBy(x => x.EndedAt)
             .ToList();
 
-        var wetnessMm = CalculateSurfaceWetnessMm(window, lawnRuns, cutoff, now, _options);
-        var rainingNowWindow = now.AddMinutes(-Math.Max(1, _options.MowingRainingNowMinutes));
+        var wetnessMm = CalculateSurfaceWetnessMm(window, lawnRuns, cutoff, now, options);
+        var rainingNowWindow = now.AddMinutes(-Math.Max(1, options.MowingRainingNowMinutes));
         var rainingNow = RainForPeriod(observations, rainingNowWindow, now) > 0.01;
 
-        var heavyRainWindow = now.AddHours(-Math.Max(1, _options.MowingHeavyRainLockoutHours));
+        var heavyRainWindow = now.AddHours(-Math.Max(1, options.MowingHeavyRainLockoutHours));
         var rainDuringLockout = RainForPeriod(observations, heavyRainWindow, now);
-        var heavyRainLockout = rainDuringLockout >= Math.Max(0, _options.MowingHeavyRainThresholdMm);
+        var heavyRainLockout = rainDuringLockout >= Math.Max(0, options.MowingHeavyRainThresholdMm);
 
         var latest = observations.LastOrDefault()?.Timestamp;
         var weatherFresh = latest is not null &&
-                           latest >= now.AddMinutes(-Math.Max(1, _options.MowingMaximumWeatherAgeMinutes));
-        var historyReady = HasSufficientWeatherHistory(observations, now, _options);
+                           latest >= now.AddMinutes(-Math.Max(1, options.MowingMaximumWeatherAgeMinutes));
+        var historyReady = HasSufficientWeatherHistory(observations, now, options);
         var weatherDataFresh = weatherFresh && historyReady;
 
-        var threshold = Math.Max(0, _options.MowingAllowedWetnessMm);
-        var allowed = weatherDataFresh && wetnessMm <= threshold && !rainingNow && !irrigationRunning && !heavyRainLockout;
+        var threshold = Math.Max(0, options.MowingAllowedWetnessMm);
+        var wetnessAllowed = wetnessMm <= threshold;
+        var allowed = weatherDataFresh && wetnessAllowed && !rainingNow && !irrigationRunning && !heavyRainLockout;
+        var latestText = latest?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "no saved sample";
+        var checks = new[]
+        {
+            new IrrigationDecisionCheck("Weather freshness", weatherFresh,
+                weatherFresh ? $"Latest committed sample: {latestText}; limit {Math.Max(1, options.MowingMaximumWeatherAgeMinutes)} min." : $"Latest committed sample is missing or older than {Math.Max(1, options.MowingMaximumWeatherAgeMinutes)} min ({latestText})."),
+            new IrrigationDecisionCheck("Weather history", historyReady,
+                historyReady ? "At least two ordered weather samples are available." : "At least two ordered, sufficiently recent weather samples are required."),
+            new IrrigationDecisionCheck("Surface wetness", wetnessAllowed,
+                $"Estimated {Math.Round(wetnessMm, 2):F2} mm; allowed maximum {threshold:F2} mm."),
+            new IrrigationDecisionCheck("Rain now", !rainingNow,
+                rainingNow ? $"Rain was detected in the last {Math.Max(1, options.MowingRainingNowMinutes)} min." : $"No rain detected in the last {Math.Max(1, options.MowingRainingNowMinutes)} min."),
+            new IrrigationDecisionCheck("Lawn irrigation", !irrigationRunning,
+                irrigationRunning ? "A configured lawn zone is currently active." : "No configured lawn zone is currently active."),
+            new IrrigationDecisionCheck("Heavy-rain lockout", !heavyRainLockout,
+                heavyRainLockout ? $"{Math.Round(rainDuringLockout, 2):F2} mm reached the {Math.Max(0, options.MowingHeavyRainThresholdMm):F2} mm threshold." : $"{Math.Round(rainDuringLockout, 2):F2} mm is below the {Math.Max(0, options.MowingHeavyRainThresholdMm):F2} mm threshold.")
+        };
 
         return new MowingStatus(
             allowed,
@@ -69,7 +87,8 @@ public sealed class MowingWetnessService
             irrigationRunning,
             heavyRainLockout,
             Math.Round(rainDuringLockout, 2),
-            now);
+            now,
+            checks);
     }
 
     internal static bool HasSufficientWeatherHistory(IReadOnlyList<WeatherObservation> observations, DateTimeOffset now, IrrigationConfiguration options)
@@ -150,13 +169,4 @@ public sealed class MowingWetnessService
         return total;
     }
 
-    private IrrigationState LoadState()
-    {
-        try
-        {
-            if (!File.Exists(_options.StateFile)) return new IrrigationState();
-            return JsonSerializer.Deserialize<IrrigationState>(File.ReadAllText(_options.StateFile)) ?? new IrrigationState();
-        }
-        catch { return new IrrigationState(); }
-    }
 }

@@ -77,35 +77,12 @@ public sealed class IrrigationServiceTests
                 ["Api:IrrigationConfiguration:Zones:0:ApplicationRateMmPerHour"] = "12"
             });
 
-            Assert.True(await service.RecordIrrigationAsync("V1", 600, "run-1", "Irrigation", CancellationToken.None));
-            Assert.True(await service.RecordIrrigationAsync("V1", 600, "run-1", "Irrigation", CancellationToken.None));
+            Assert.True(await service.RecordIrrigationAsync("V1", 600, "run-1", CancellationToken.None));
+            Assert.True(await service.RecordIrrigationAsync("V1", 600, "run-1", CancellationToken.None));
 
             using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(stateFile));
             Assert.Equal(8, doc.RootElement.GetProperty("BalanceDeficitMm").GetProperty("LawnEast").GetDouble(), 6);
             Assert.Single(doc.RootElement.GetProperty("IrrigationRuns").EnumerateArray());
-        }
-        finally
-        {
-            Directory.Delete(Path.GetDirectoryName(stateFile)!, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task Rinse_IsRecordedButDoesNotChangeBalance()
-    {
-        var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{\"V6\":5},\"IrrigationRuns\":[]}");
-        try
-        {
-            var service = CreateService(stateFile, new Dictionary<string, string?>
-            {
-                ["Api:IrrigationConfiguration:Zones:0:Id"] = "V6",
-                ["Api:IrrigationConfiguration:Zones:0:ApplicationRateMmPerHour"] = "25.4"
-            });
-
-            Assert.True(await service.RecordIrrigationAsync("V6", 120, "rinse-1", "Rinse", CancellationToken.None));
-            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(stateFile));
-            Assert.Equal(5, doc.RootElement.GetProperty("BalanceDeficitMm").GetProperty("V6").GetDouble(), 6);
-            Assert.Equal("Rinse", doc.RootElement.GetProperty("IrrigationRuns")[0].GetProperty("Type").GetString());
         }
         finally
         {
@@ -139,6 +116,10 @@ public sealed class IrrigationServiceTests
             var v4 = result.Zones.Single(x => x.Id == "V4");
             Assert.Equal(773, v1.RuntimeSeconds);
             Assert.Equal(v1.RuntimeSeconds, v4.RuntimeSeconds);
+            Assert.Equal("LawnEast", v1.BalanceGroup);
+            Assert.Equal(23.3, v1.GroupApplicationRateMmPerHour, 6);
+            Assert.True(v1.ShouldIrrigate);
+            Assert.Contains("combined application rate", v1.DecisionSummary);
         }
         finally
         {

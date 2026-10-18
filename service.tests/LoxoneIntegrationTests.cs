@@ -5,6 +5,17 @@ namespace service.tests;
 
 public sealed class LoxoneIntegrationTests
 {
+    [Fact]
+    public void NormalizesWatchedStateUuidsToMatchLoxoneEventUuids()
+    {
+        var watched = LoxoneIntegration.NormalizeStateUuids(
+            ["2105c36a-029f-101c-18ff-0c30f195a087", "217778eb018e358905ff4d9d810bc0d6"]);
+
+        Assert.Contains("2105c36a029f101c18ff0c30f195a087", watched);
+        Assert.Contains("217778eb018e358905ff4d9d810bc0d6", watched);
+        Assert.Equal(2, watched.Count);
+    }
+
     [Theory]
     [InlineData("hsv(0,0,0)", 0)]
     [InlineData("hsv(0, 0, 100)", 100_100_100)]

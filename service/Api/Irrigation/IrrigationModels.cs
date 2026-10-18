@@ -39,11 +39,24 @@ public sealed class IrrigationConfiguration
     public double MowingDryingFactor { get; set; } = 1.0;
 
     public List<IrrigationZoneConfiguration> Zones { get; set; } = [];
+    public IrrigationLoxoneBlockConfiguration? LoxoneBlock { get; set; }
+}
+
+public sealed class IrrigationLoxoneBlockConfiguration
+{
+    public string ServerId { get; set; } = string.Empty;
+    public string Control { get; set; } = string.Empty;
+    public string ActiveStateUuid { get; set; } = string.Empty;
+    public string ZonesStateUuid { get; set; } = string.Empty;
+    public string CurrentZoneStateUuid { get; set; } = string.Empty;
 }
 
 public sealed class IrrigationZoneConfiguration
 {
     public string Id { get; set; } = string.Empty;
+    public string LoxoneBlockId { get; set; } = string.Empty;
+    public string LoxoneZoneId { get; set; } = string.Empty;
+    public string LoxoneName { get; set; } = string.Empty;
     public string Type { get; set; } = "Lawn";
     public string BalanceGroup { get; set; } = string.Empty;
     public double Exposure { get; set; } = 1.0;
@@ -51,7 +64,19 @@ public sealed class IrrigationZoneConfiguration
     public double ApplicationRateMmPerHour { get; set; } = 10.0;
 }
 
-public sealed record IrrigationZoneResult(string Id, string BalanceGroup, double RequiredMm, int RuntimeSeconds);
+public sealed record IrrigationZoneResult(
+    string Id,
+    string BalanceGroup,
+    double RequiredMm,
+    int RuntimeSeconds,
+    double StoredDeficitMm,
+    double ForecastRainAdjustmentMm,
+    double IrrigationTriggerMm,
+    double GroupApplicationRateMmPerHour,
+    int CalculatedRuntimeSeconds,
+    bool RuntimeCapped,
+    bool ShouldIrrigate,
+    string DecisionSummary);
 
 public sealed record IrrigationRun(
     string EventId,
@@ -72,7 +97,10 @@ public sealed record MowingStatus(
     bool LawnIrrigationRunning,
     bool HeavyRainLockout,
     double RainDuringLockoutWindowMm,
-    DateTimeOffset CalculatedAt);
+    DateTimeOffset CalculatedAt,
+    IReadOnlyList<IrrigationDecisionCheck> DecisionChecks);
+
+public sealed record IrrigationDecisionCheck(string Name, bool Passed, string Explanation);
 
 public sealed record IrrigationResult(
     bool Irrigate,
@@ -84,7 +112,30 @@ public sealed record IrrigationResult(
     double ForecastEt0Mm,
     double WaterDeficitMm,
     IReadOnlyList<IrrigationZoneResult> Zones,
-    DateTimeOffset CalculatedAt);
+    DateTimeOffset CalculatedAt,
+    double EffectiveForecastRainMm,
+    bool ForecastAvailable,
+    string DecisionSummary);
+
+public sealed record IrrigationStoredData(
+    IReadOnlyList<WeatherObservation> Observations,
+    IReadOnlyDictionary<string, double> BalanceDeficitMm,
+    DateOnly? LastBalancedLocalDate,
+    IReadOnlyList<IrrigationRun> IrrigationRuns,
+    int TotalObservationCount);
+
+public sealed record IrrigationDashboardSnapshot(
+    IrrigationConfiguration Configuration,
+    IrrigationStoredData Stored,
+    IrrigationWeatherInputState PendingWeather,
+    IReadOnlyList<string> ActiveZoneIds,
+    IrrigationResult Decision,
+    MowingStatus Mowing);
+
+public sealed record IrrigationWeatherInputState(
+    IReadOnlyDictionary<string, double?> Values,
+    IReadOnlyDictionary<string, DateTimeOffset> UpdatedAt,
+    bool Complete);
 
 internal sealed class IrrigationState
 {

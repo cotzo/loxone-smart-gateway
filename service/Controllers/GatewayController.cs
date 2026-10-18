@@ -10,7 +10,11 @@ public sealed class GatewayController(
     GatewayStateStore store,
     LoxoneIntegration loxone,
     DeviceIntegrations devices,
-    IrrigationService irrigation) : ControllerBase
+    IrrigationService irrigation,
+    WeatherIngestionService weatherIngestion,
+    IrrigationRunTracker irrigationRunTracker,
+    MowingWetnessService mowingWetness,
+    IrrigationLoxoneService irrigationLoxone) : ControllerBase
 {
     [HttpPost("login")]
     public IActionResult Login([FromBody] LoginRequest request, [FromServices] IConfiguration configuration)
@@ -140,6 +144,44 @@ public sealed class GatewayController(
     [HttpGet("irrigation")]
     public ActionResult<IrrigationConfiguration> GetIrrigation() => Ok(store.GetSnapshot().Settings.Irrigation);
 
+    [HttpGet("irrigation/loxone/blocks")]
+    public ActionResult<IReadOnlyList<IrrigationBlockOption>> GetIrrigationBlocks() => Ok(irrigationLoxone.GetBlocks());
+
+    [HttpPost("irrigation/loxone/preview")]
+    public async Task<IActionResult> PreviewIrrigationBlock([FromBody] IrrigationBlockRequest request, CancellationToken cancellationToken)
+    {
+        try { return Ok(await irrigationLoxone.PreviewAsync(request.BlockId, cancellationToken)); }
+        catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
+        catch (Exception ex) when (ex is InvalidOperationException or TimeoutException or System.Text.Json.JsonException)
+        { return BadRequest(new { error = ex.Message }); }
+    }
+
+    [HttpPost("irrigation/loxone/import")]
+    public async Task<IActionResult> ImportIrrigationBlock([FromBody] IrrigationBlockRequest request, CancellationToken cancellationToken)
+    {
+        try { return Ok(await irrigationLoxone.ImportAsync(request.BlockId, cancellationToken)); }
+        catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or TimeoutException or System.Text.Json.JsonException)
+        { return BadRequest(new { error = ex.Message }); }
+    }
+
+    [HttpGet("irrigation/status")]
+    public async Task<ActionResult<IrrigationDashboardSnapshot>> GetIrrigationStatus(CancellationToken cancellationToken)
+    {
+        var decision = await irrigation.CalculateAsync(cancellationToken);
+        var stored = await irrigation.GetStoredDataAsync(cancellationToken);
+        var pending = await weatherIngestion.GetPendingSnapshotAsync(cancellationToken);
+        var activeZoneIds = await irrigationRunTracker.GetActiveZoneIdsAsync(cancellationToken);
+        var mowing = await mowingWetness.GetStatusAsync(cancellationToken);
+        return Ok(new IrrigationDashboardSnapshot(
+            store.GetSnapshot().Settings.Irrigation,
+            stored,
+            pending,
+            activeZoneIds,
+            decision,
+            mowing));
+    }
+
     [HttpPut("irrigation")]
     public async Task<IActionResult> SaveIrrigation([FromBody] IrrigationConfiguration configuration, CancellationToken cancellationToken)
     {
@@ -162,4 +204,5 @@ public sealed class GatewayController(
     }
 
     public sealed record LoginRequest(string? Password);
+    public sealed record IrrigationBlockRequest(string BlockId);
 }

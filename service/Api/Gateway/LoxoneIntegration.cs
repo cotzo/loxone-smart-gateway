@@ -11,6 +11,38 @@ namespace loxone.smart.gateway.Api.Gateway;
 
 public sealed class LoxoneIntegration
 {
+    public async Task<IReadOnlyDictionary<string, string>> ReadStatesOnceAsync(
+        LoxoneSettings server, IReadOnlySet<string> watchedStateUuids, CancellationToken cancellationToken)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var combined = CancellationTokenSource.CreateLinkedTokenSource(linked.Token, timeout.Token);
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var watchedUuids = NormalizeStateUuids(watchedStateUuids);
+        try
+        {
+            await RunSessionAsync(server, (uuid, value) =>
+            {
+                lock (values)
+                {
+                    values[NormalizeUuid(uuid)] = value;
+                    if (watchedUuids.All(values.ContainsKey))
+                        linked.Cancel();
+                }
+            }, _ => { }, watchedStateUuids, combined.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested &&
+                                                  (linked.IsCancellationRequested || timeout.IsCancellationRequested)) { }
+        if (cancellationToken.IsCancellationRequested) cancellationToken.ThrowIfCancellationRequested();
+        if (timeout.IsCancellationRequested)
+        {
+            string[] missing;
+            lock (values) missing = watchedUuids.Where(uuid => !values.ContainsKey(uuid)).ToArray();
+            throw new TimeoutException($"Timed out waiting for the selected irrigation block's states. Missing state UUID(s): {string.Join(", ", missing)}.");
+        }
+        lock (values) return new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
+    }
+
     public async Task<IReadOnlyList<LoxoneStateOption>> DiscoverAsync(LoxoneSettings server, CancellationToken cancellationToken)
     {
         using var client = new WebsocketWebserviceClient(server.Host, server.Port, 2, Guid.NewGuid().ToString(), "Loxone Smart Gateway", server.UseTls, server.CertificateAuthorityPem);
@@ -42,6 +74,7 @@ public sealed class LoxoneIntegration
     public async Task RunSessionAsync(LoxoneSettings server, Action<string, string> onValue, Action<string> status,
         IReadOnlySet<string> watchedStateUuids, CancellationToken cancellationToken, int sessionAttempt = 1)
     {
+        var watchedUuids = NormalizeStateUuids(watchedStateUuids);
         var sessionLog = Log.ForContext("LoxoneServer", server.Name).ForContext("SessionAttempt", sessionAttempt);
         var sessionStartedAt = DateTimeOffset.UtcNow;
         using var client = new WebsocketWebserviceClient(server.Host, server.Port, 2, Guid.NewGuid().ToString(), "Loxone Smart Gateway", server.UseTls, server.CertificateAuthorityPem);
@@ -72,7 +105,7 @@ public sealed class LoxoneIntegration
             foreach (var state in args.States)
             {
                 var uuid = ReadProperty(state, "Uuid", "UUID", "Id")?.ToString();
-                if (string.IsNullOrWhiteSpace(uuid) || !watchedStateUuids.Contains(NormalizeUuid(uuid))) continue;
+                if (string.IsNullOrWhiteSpace(uuid) || !watchedUuids.Contains(NormalizeUuid(uuid))) continue;
 
                 var raw = ReadProperty(state, "Value", "DVal", "StateValue", "Text");
                 var members = state.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
@@ -131,6 +164,11 @@ public sealed class LoxoneIntegration
     }
 
     private static string NormalizeUuid(string uuid) => uuid.Replace("-", string.Empty, StringComparison.Ordinal);
+
+    internal static HashSet<string> NormalizeStateUuids(IEnumerable<string> uuids) =>
+        uuids.Where(uuid => !string.IsNullOrWhiteSpace(uuid))
+            .Select(NormalizeUuid)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     internal static bool TryParseStateValue(string? raw, out double value)
     {

@@ -68,6 +68,7 @@ builder.Services.AddHttpClient<OpenMeteoForecastClient>(client =>
 builder.Services.AddSingleton<IrrigationService>();
 builder.Services.AddSingleton<WeatherIngestionService>();
 builder.Services.AddSingleton<IrrigationRunTracker>();
+builder.Services.AddSingleton<IrrigationLoxoneService>();
 builder.Services.AddSingleton<MowingWetnessService>();
 
 var app = builder.Build();

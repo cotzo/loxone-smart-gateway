@@ -8,7 +8,8 @@ namespace loxone.smart.gateway.Api.Gateway;
 public sealed class GatewayRuntimeService(
     GatewayStateStore store,
     LoxoneIntegration loxone,
-    DeviceIntegrations devices) : BackgroundService
+    DeviceIntegrations devices,
+    loxone.smart.gateway.Api.Irrigation.IrrigationLoxoneService irrigationLoxone) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -57,6 +58,12 @@ public sealed class GatewayRuntimeService(
                     .Where(mapping => mapping.LoxoneServerId.Equals(server.Id, StringComparison.OrdinalIgnoreCase))
                     .Select(mapping => NormalizeUuid(mapping.LoxoneStateUuid))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var irrigationBlock = store.GetSnapshot().Settings.Irrigation.LoxoneBlock;
+                if (irrigationBlock is not null && irrigationBlock.ServerId.Equals(server.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    watchedStateUuids.Add(NormalizeUuid(irrigationBlock.ActiveStateUuid));
+                    watchedStateUuids.Add(NormalizeUuid(irrigationBlock.CurrentZoneStateUuid));
+                }
                 await loxone.RunSessionAsync(server,
                     (uuid, value) =>
                     {
@@ -88,7 +95,7 @@ public sealed class GatewayRuntimeService(
 
     private async Task ProcessStatesAsync(string serverId, ChannelReader<(string Uuid, string Value, DateTimeOffset ReceivedAt)> reader,
         Dictionary<string, (DeviceMapping Mapping, string Value, DateTimeOffset ReceivedAt, DateTimeOffset RetryAfter, int Attempts)> pending,
-        Dictionary<string, string> lastValues, CancellationToken cancellationToken)
+            Dictionary<string, string> lastValues, CancellationToken cancellationToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
         while (!cancellationToken.IsCancellationRequested)
@@ -111,6 +118,9 @@ public sealed class GatewayRuntimeService(
                     continue;
                 }
                 lastValues[normalizedUuid] = state.Value;
+                try { await irrigationLoxone.ObserveStateAsync(serverId, state.Uuid, state.Value, cancellationToken); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception ex) { Log.Warning(ex, "Unable to process irrigation currentZone state {Uuid} from Miniserver {ServerId}", state.Uuid, serverId); }
                 var settings = store.GetSnapshot().Settings;
                 foreach (var mapping in settings.Mappings.Where(x =>
                              x.LoxoneServerId.Equals(serverId, StringComparison.OrdinalIgnoreCase) &&

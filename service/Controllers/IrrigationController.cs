@@ -8,7 +8,6 @@ namespace loxone.smart.gateway.Controllers;
 public sealed class IrrigationController(
     IrrigationService service,
     WeatherIngestionService weatherIngestion,
-    IrrigationRunTracker runTracker,
     MowingWetnessService mowingWetness) : ControllerBase
 {
     [HttpGet("weather/{field}/{value:double}")]
@@ -61,27 +60,6 @@ public sealed class IrrigationController(
         var result = await service.CalculateAsync(cancellationToken);
         var zone = result.Zones.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
         return zone is null ? NotFound() : Ok(zone.RuntimeSeconds);
-    }
-
-    [HttpGet("zone/{id}/start")]
-    public async Task<IActionResult> StartRun(
-        string id,
-        [FromQuery] string type = "Irrigation",
-        CancellationToken cancellationToken = default) =>
-        await runTracker.StartAsync(id, type, cancellationToken)
-            ? Ok()
-            : BadRequest("Type must be Irrigation, Rinse, or Manual.");
-
-    [HttpGet("zone/{id}/stop")]
-    public async Task<IActionResult> StopRun(string id, CancellationToken cancellationToken) =>
-        await runTracker.StopAsync(id, cancellationToken) ? Ok() : BadRequest("Unknown zone or invalid application rate.");
-
-    [HttpGet("zone/{id}/applied/{runtimeSeconds:int}/{eventId}")]
-    public async Task<IActionResult> RecordAppliedWater(string id, int runtimeSeconds, string eventId,
-        [FromQuery] string type = "Irrigation", CancellationToken cancellationToken = default)
-    {
-        var recorded = await service.RecordIrrigationAsync(id, runtimeSeconds, eventId, type, cancellationToken);
-        return recorded ? Ok() : BadRequest("Unknown zone, invalid application rate/runtime/event id, or type must be Irrigation, Rinse, or Manual.");
     }
 
     [HttpGet("history")]
