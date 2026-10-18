@@ -54,6 +54,7 @@ builder.Services.AddSingleton<LoxoneIntegration>();
 builder.Services.AddSingleton<DeviceIntegrations>();
 builder.Services.AddHostedService<GatewayRuntimeService>();
 builder.Services.AddHostedService<IrrigationDurationSyncService>();
+builder.Services.AddHostedService<IrrigationSignalSyncService>();
 builder.Services.AddHostedService<IrrigationWeatherStateService>(provider => provider.GetRequiredService<IrrigationWeatherStateService>());
 
 builder.Services.AddHttpClient("HueDynamic")
@@ -72,7 +73,7 @@ builder.Services.AddSingleton<WeatherIngestionService>();
 builder.Services.AddSingleton<IrrigationWeatherStateService>();
 builder.Services.AddSingleton<IrrigationRunTracker>();
 builder.Services.AddSingleton<IrrigationLoxoneService>();
-builder.Services.AddSingleton<MowingWetnessService>();
+builder.Services.AddSingleton<LawnDryService>();
 
 var app = builder.Build();
 app.UseDefaultFiles();

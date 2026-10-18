@@ -29,7 +29,8 @@ public sealed class IrrigationConfiguration
 
     // Surface wetness / mower protection. This is intentionally separate from the root-zone
     // irrigation deficit: the mower cares about traction and soft surface soil on slopes.
-    public double MowingAllowedWetnessMm { get; set; } = 1.0;
+    [System.Text.Json.Serialization.JsonPropertyName("mowingAllowedWetnessMm")]
+    public double LawnDryWetnessThresholdMm { get; set; } = 1.0;
     public int MowingWetnessLookbackHours { get; set; } = 48;
     public int MowingRainingNowMinutes { get; set; } = 15;
     public double MowingHeavyRainThresholdMm { get; set; } = 10.0;
@@ -41,6 +42,17 @@ public sealed class IrrigationConfiguration
     public List<IrrigationZoneConfiguration> Zones { get; set; } = [];
     public IrrigationLoxoneBlockConfiguration? LoxoneBlock { get; set; }
     public List<IrrigationWeatherStateMapping> WeatherStateMappings { get; set; } = [];
+    public IrrigationLoxoneSignalTarget? IrrigationRequiredTarget { get; set; }
+    public IrrigationLoxoneSignalTarget? LawnDryTarget { get; set; }
+}
+
+public sealed class IrrigationLoxoneSignalTarget
+{
+    public string ServerId { get; set; } = string.Empty;
+    public string StateUuid { get; set; } = string.Empty;
+    public string ControlUuid { get; set; } = string.Empty;
+    public string Control { get; set; } = string.Empty;
+    public string State { get; set; } = string.Empty;
 }
 
 public sealed class IrrigationWeatherStateMapping
@@ -97,8 +109,8 @@ public sealed record IrrigationRun(
     DateTimeOffset StartedAt,
     DateTimeOffset EndedAt);
 
-public sealed record MowingStatus(
-    bool MowingAllowed,
+public sealed record LawnDryStatus(
+    bool LawnDry,
     double LawnWetnessMm,
     double AllowedThresholdMm,
     bool WeatherDataFresh,
@@ -138,7 +150,7 @@ public sealed record IrrigationDashboardSnapshot(
     IrrigationStoredData Stored,
     IReadOnlyList<string> ActiveZoneIds,
     IrrigationResult Decision,
-    MowingStatus Mowing);
+    LawnDryStatus LawnDry);
 
 internal sealed class IrrigationState
 {

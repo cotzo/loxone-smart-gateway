@@ -89,6 +89,21 @@ public sealed class LoxoneIntegration
         Log.Information("Updated irrigation durations on Loxone block {ControlUuid} ({ZoneCount} zones)", controlUuid, durationsByZoneId.Count);
     }
 
+    public async Task SetDigitalInputAsync(LoxoneSettings server, string controlUuid, bool value, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(controlUuid)) throw new ArgumentException("A Loxone control UUID is required.", nameof(controlUuid));
+        var command = $"jdev/sps/io/{controlUuid}/{(value ? "On" : "Off")}";
+        using var client = new WebsocketWebserviceClient(server.Host, server.Port, 2, Guid.NewGuid().ToString(), "Loxone Smart Gateway", server.UseTls, server.CertificateAuthorityPem);
+        client.OnAuthenticated += (_, _) => { };
+        await PrimePublicKeyAsync(client);
+        using var tokenHandler = new TokenHandler(client, server.Username);
+        tokenHandler.SetPassword(server.Password);
+        await AuthenticateAsync(client, tokenHandler);
+        var response = await client.SendWebservice(new WebserviceRequest<string>(command, EncryptionType.None));
+        if (response is null) throw new IOException($"Miniserver did not acknowledge digital input command for {controlUuid}.");
+        Log.Information("Set Loxone digital input {ControlUuid} to {Value}", controlUuid, value ? "On" : "Off");
+    }
+
     internal static string BuildIrrigationDurationsCommand(string controlUuid, IReadOnlyDictionary<string, int> durationsByZoneId)
     {
         if (string.IsNullOrWhiteSpace(controlUuid)) throw new ArgumentException("A Loxone control UUID is required.", nameof(controlUuid));

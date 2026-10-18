@@ -1,17 +1,17 @@
 namespace loxone.smart.gateway.Api.Irrigation;
 
-public sealed class MowingWetnessService
+public sealed class LawnDryService
 {
     private readonly IrrigationService _irrigation;
     private readonly IrrigationRunTracker _runTracker;
 
-    public MowingWetnessService(IrrigationService irrigation, IrrigationRunTracker runTracker)
+    public LawnDryService(IrrigationService irrigation, IrrigationRunTracker runTracker)
     {
         _irrigation = irrigation;
         _runTracker = runTracker;
     }
 
-    public async Task<MowingStatus> GetStatusAsync(CancellationToken cancellationToken)
+    public async Task<LawnDryStatus> GetStatusAsync(CancellationToken cancellationToken)
     {
         var options = _irrigation.GetConfigurationSnapshot();
         // Use complete retained history; truncating the dashboard's recent-sample view would
@@ -58,7 +58,7 @@ public sealed class MowingWetnessService
         var historyReady = HasSufficientWeatherHistory(observations, now, options);
         var weatherDataFresh = weatherFresh && historyReady;
 
-        var threshold = Math.Max(0, options.MowingAllowedWetnessMm);
+        var threshold = Math.Max(0, options.LawnDryWetnessThresholdMm);
         var wetnessAllowed = wetnessMm <= threshold;
         var allowed = weatherDataFresh && wetnessAllowed && !rainingNow && !irrigationRunning && !heavyRainLockout;
         var latestText = latest?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "no saved sample";
@@ -78,7 +78,7 @@ public sealed class MowingWetnessService
                 heavyRainLockout ? $"{Math.Round(rainDuringLockout, 2):F2} mm reached the {Math.Max(0, options.MowingHeavyRainThresholdMm):F2} mm threshold." : $"{Math.Round(rainDuringLockout, 2):F2} mm is below the {Math.Max(0, options.MowingHeavyRainThresholdMm):F2} mm threshold.")
         };
 
-        return new MowingStatus(
+        return new LawnDryStatus(
             allowed,
             Math.Round(wetnessMm, 2),
             Math.Round(threshold, 2),

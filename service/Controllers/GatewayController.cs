@@ -12,7 +12,7 @@ public sealed class GatewayController(
     DeviceIntegrations devices,
     IrrigationService irrigation,
     IrrigationRunTracker irrigationRunTracker,
-    MowingWetnessService mowingWetness,
+    LawnDryService lawnDryService,
     IrrigationLoxoneService irrigationLoxone) : ControllerBase
 {
     [HttpPost("login")]
@@ -170,13 +170,13 @@ public sealed class GatewayController(
         var decision = await irrigation.CalculateAsync(cancellationToken);
         var stored = await irrigation.GetStoredDataAsync(cancellationToken);
         var activeZoneIds = await irrigationRunTracker.GetActiveZoneIdsAsync(cancellationToken);
-        var mowing = await mowingWetness.GetStatusAsync(cancellationToken);
+        var lawnDry = await lawnDryService.GetStatusAsync(cancellationToken);
         return Ok(new IrrigationDashboardSnapshot(
             store.GetSnapshot().Settings.Irrigation,
             stored,
             activeZoneIds,
             decision,
-            mowing));
+            lawnDry));
     }
 
     [HttpPut("irrigation")]
