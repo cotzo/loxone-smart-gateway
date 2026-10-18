@@ -8,7 +8,6 @@ public sealed class IrrigationWeatherStateService(GatewayStateStore store, Weath
 {
     private static readonly string[] RequiredFields = ["temperature", "humidity", "pressure", "wind", "light", "rainfall"];
     private static readonly TimeSpan SampleInterval = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan MaximumReadingAge = TimeSpan.FromMinutes(15);
     private readonly object _sync = new();
     private readonly Dictionary<string, (string ServerId, string Uuid, double Value, DateTimeOffset ReceivedAt)> _latest = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _commitGate = new(1, 1);
@@ -73,7 +72,6 @@ public sealed class IrrigationWeatherStateService(GatewayStateStore store, Weath
                 var configured = RequiredFields.All(field => mappings.Any(x => x.Field.Equals(field, StringComparison.OrdinalIgnoreCase) &&
                     !string.IsNullOrWhiteSpace(x.ServerId) && !string.IsNullOrWhiteSpace(x.StateUuid)));
                 var readingsValid = configured && RequiredFields.All(field => _latest.TryGetValue(field, out var reading) &&
-                    sampleTime - reading.ReceivedAt <= MaximumReadingAge &&
                     mappings.Any(mapping => mapping.Field.Equals(field, StringComparison.OrdinalIgnoreCase) &&
                         mapping.ServerId.Equals(reading.ServerId, StringComparison.OrdinalIgnoreCase) &&
                         Normalize(mapping.StateUuid).Equals(reading.Uuid, StringComparison.OrdinalIgnoreCase)));
