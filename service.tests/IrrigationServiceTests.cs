@@ -128,6 +128,24 @@ public sealed class IrrigationServiceTests
     }
 
     [Fact]
+    public async Task CalculateAsync_PropagatesCallerCancellationDuringForecastRequest()
+    {
+        var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{},\"IrrigationRuns\":[]}");
+        try
+        {
+            var service = CreateService(stateFile, new Dictionary<string, string?>());
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.CalculateAsync(cancellation.Token));
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(stateFile)!, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Runtime_IsCapped()
     {
         var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{\"V6\":15},\"IrrigationRuns\":[]}");
