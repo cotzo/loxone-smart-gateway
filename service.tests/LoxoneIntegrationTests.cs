@@ -6,6 +6,47 @@ namespace service.tests;
 public sealed class LoxoneIntegrationTests
 {
     [Fact]
+    public void IrrigationCurrentZone_UsesLoxoneZoneIdRatherThanConfigurationPosition()
+    {
+        var zones = new[]
+        {
+            new loxone.smart.gateway.Api.Irrigation.IrrigationZoneConfiguration { Id = "gateway-2", LoxoneZoneId = "2" },
+            new loxone.smart.gateway.Api.Irrigation.IrrigationZoneConfiguration { Id = "gateway-0", LoxoneZoneId = "0" },
+            new loxone.smart.gateway.Api.Irrigation.IrrigationZoneConfiguration { Id = "gateway-1", LoxoneZoneId = "1" }
+        };
+
+        Assert.Equal(new[] { "gateway-1" },
+            loxone.smart.gateway.Api.Irrigation.IrrigationLoxoneService.ResolveCurrentZoneIds(true, 1, zones));
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, -1)]
+    [InlineData(true, 7)]
+    public void IrrigationCurrentZone_OffOrUnknownIndexDoesNotGuessAZone(bool active, int currentZone)
+    {
+        var zones = new[]
+        {
+            new loxone.smart.gateway.Api.Irrigation.IrrigationZoneConfiguration { Id = "gateway-0", LoxoneZoneId = "0" },
+            new loxone.smart.gateway.Api.Irrigation.IrrigationZoneConfiguration { Id = "gateway-1", LoxoneZoneId = "1" }
+        };
+
+        Assert.Empty(loxone.smart.gateway.Api.Irrigation.IrrigationLoxoneService.ResolveCurrentZoneIds(active, currentZone, zones));
+    }
+
+    [Fact]
+    public void IrrigationCurrentZoneEightTracksAllZones()
+    {
+        var zones = new[]
+        {
+            new loxone.smart.gateway.Api.Irrigation.IrrigationZoneConfiguration { Id = "gateway-0", LoxoneZoneId = "0" },
+            new loxone.smart.gateway.Api.Irrigation.IrrigationZoneConfiguration { Id = "gateway-1", LoxoneZoneId = "1" }
+        };
+
+        Assert.Equal(new[] { "gateway-0", "gateway-1" },
+            loxone.smart.gateway.Api.Irrigation.IrrigationLoxoneService.ResolveCurrentZoneIds(true, 8, zones));
+    }
+    [Fact]
     public void BuildsBatchIrrigationDurationCommandWithZeroBasedZoneIds()
     {
         var command = LoxoneIntegration.BuildIrrigationDurationsCommand("control-uuid", new Dictionary<string, int>

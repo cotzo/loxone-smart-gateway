@@ -144,15 +144,9 @@ public sealed class IrrigationLoxoneService(GatewayStateStore store, LoxoneInteg
             Log.Debug("Waiting for both active and currentZone values from Loxone irrigation block {Control}; latest event was {Value}", block.Control, raw);
             return;
         }
-        var expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var blockZones = config.Zones.Where(x => x.LoxoneBlockId.Equals(MakeBlockId(block.ServerId, block.Control), StringComparison.OrdinalIgnoreCase)).ToList();
         var current = observed.CurrentZone.Value;
-        if (observed.Active.Value && current == 8) expected.UnionWith(blockZones.Select(x => x.Id));
-        else if (observed.Active.Value && current >= 0 && current < blockZones.Count)
-        {
-            var zone = blockZones.ElementAtOrDefault(current);
-            if (zone is not null) expected.Add(zone.Id);
-        }
+        var expected = ResolveCurrentZoneIds(observed.Active.Value, current, blockZones);
 
         HashSet<string> previous;
         lock (_sync)
@@ -196,6 +190,30 @@ public sealed class IrrigationLoxoneService(GatewayStateStore store, LoxoneInteg
 
     private static int ParseCurrentZone(string raw) => int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var current) && current is >= -1 and <= 8
         ? current : throw new InvalidOperationException($"Invalid Loxone currentZone value '{raw}'. Expected -1 through 8.");
+
+    internal static HashSet<string> ResolveCurrentZoneIds(bool active, int current,
+        IReadOnlyList<IrrigationZoneConfiguration> zones)
+    {
+        var expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!active) return expected;
+        if (current == 8)
+        {
+            expected.UnionWith(zones.Select(x => x.Id));
+            return expected;
+        }
+        if (current < 0) return expected;
+
+        // Loxone defines currentZone as -1=off, 0..7=zone index, and 8=all zones;
+        // each zones[] entry's id is that zero-based zone index. Resolve by ID first so
+        // retained/stale zones or any list reordering cannot redirect a run.
+        var zone = zones.FirstOrDefault(x =>
+            int.TryParse(x.LoxoneZoneId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) && id == current);
+        // Support legacy/manual configurations that have not yet stored imported Loxone IDs.
+        if (zone is null && current < zones.Count && zones[current].LoxoneZoneId.Length == 0)
+            zone = zones[current];
+        if (zone is not null) expected.Add(zone.Id);
+        return expected;
+    }
 
     private static bool ParseActive(string raw) => TryParseActive(raw) ?? throw new InvalidOperationException($"Invalid Loxone active value '{raw}'. Expected true/false or 1/0.");
     private static bool? TryParseActive(string raw) => raw.Trim().ToLowerInvariant() switch
