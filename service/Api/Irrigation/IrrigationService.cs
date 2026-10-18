@@ -82,11 +82,18 @@ public sealed class IrrigationService
 
             var previousTimestamp = _state.Observations.Select(x => x.Timestamp).Where(x => x is not null)
                 .Select(x => x!.Value).DefaultIfEmpty().Max();
+            var previousObservation = _state.Observations
+                .Where(x => x.Timestamp is not null && x.Timestamp <= timestamp)
+                .OrderByDescending(x => x.Timestamp).FirstOrDefault();
+            var maxRainGap = TimeSpan.FromMinutes(Math.Max(1, options.MowingMaximumDryingGapMinutes));
+            var rainfallTimingUncertain = previousObservation is not null && IsRainfallTimingUncertain(
+                previousObservation, observation with { Timestamp = timestamp }, maxRainGap);
             _state.Observations.Add(observation with
             {
                 Timestamp = timestamp,
                 HumidityPct = Math.Clamp(observation.HumidityPct, 0, 100),
-                RainfallMm = Math.Max(0, observation.RainfallMm)
+                RainfallMm = Math.Max(0, observation.RainfallMm),
+                RainfallTimingUncertain = observation.RainfallTimingUncertain || rainfallTimingUncertain
             });
 
             AccumulateCompletedDays(receivedAt);
@@ -417,6 +424,12 @@ public sealed class IrrigationService
         }
         return total;
     }
+
+    internal static bool IsRainfallTimingUncertain(WeatherObservation previous, WeatherObservation current, TimeSpan maximumGap) =>
+        previous.Timestamp is null || current.Timestamp is null ||
+        current.Timestamp <= previous.Timestamp ||
+        current.Timestamp.Value - previous.Timestamp.Value > maximumGap ||
+        current.RainfallMm < previous.RainfallMm;
 
     internal static double CalculateEt0(IReadOnlyList<WeatherObservation> observations, IrrigationConfiguration options)
     {

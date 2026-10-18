@@ -27,6 +27,20 @@ public sealed class IrrigationServiceTests
     }
 
     [Fact]
+    public void RainfallTimingUncertainty_DetectsCounterResetAndLongGapWithoutChangingCounterData()
+    {
+        var start = DateTimeOffset.Parse("2026-08-20T00:00:00Z");
+        var previous = Obs(12, start);
+        var reset = Obs(0.5, start.AddMinutes(1));
+        var longGap = Obs(15, start.AddHours(1));
+
+        Assert.True(IrrigationService.IsRainfallTimingUncertain(previous, reset, TimeSpan.FromMinutes(30)));
+        Assert.True(IrrigationService.IsRainfallTimingUncertain(previous, longGap, TimeSpan.FromMinutes(30)));
+        Assert.False(IrrigationService.IsRainfallTimingUncertain(previous, Obs(12.5, start.AddMinutes(5)), TimeSpan.FromMinutes(30)));
+        Assert.Equal(0.5, IrrigationService.RainDelta(new[] { previous, reset }), 6);
+    }
+
+    [Fact]
     public void RainForPeriod_UsesBaselineBeforeBoundary()
     {
         var start = DateTimeOffset.Parse("2026-08-20T00:00:00Z");

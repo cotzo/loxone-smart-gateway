@@ -53,6 +53,8 @@ public sealed class LawnDryService
         var heavyRainWindow = now.AddHours(-Math.Max(1, options.MowingHeavyRainLockoutHours));
         var rainDuringLockout = RainForPeriod(observations, heavyRainWindow, now);
         var heavyRainLockout = rainDuringLockout >= Math.Max(0, options.MowingHeavyRainThresholdMm);
+        var rainfallTimingUncertain = HasUncertainRainfallInterval(observations, rainingNowWindow, now) ||
+                                     HasUncertainRainfallInterval(observations, heavyRainWindow, now);
 
         var latest = observations.LastOrDefault()?.Timestamp;
         var weatherFresh = latest is not null &&
@@ -62,7 +64,7 @@ public sealed class LawnDryService
 
         var threshold = Math.Max(0, options.LawnDryWetnessThresholdMm);
         var wetnessAllowed = wetnessMm <= threshold;
-        var allowed = weatherDataFresh && wetnessAllowed && !rainingNow && !irrigationRunning && !heavyRainLockout;
+        var allowed = weatherDataFresh && wetnessAllowed && !rainingNow && !irrigationRunning && !heavyRainLockout && !rainfallTimingUncertain;
         var latestText = latest?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "no saved sample";
         var checks = new[]
         {
@@ -77,7 +79,9 @@ public sealed class LawnDryService
             new IrrigationDecisionCheck("Lawn irrigation", !irrigationRunning,
                 irrigationRunning ? "A configured lawn zone is currently active." : "No configured lawn zone is currently active."),
             new IrrigationDecisionCheck("Heavy-rain lockout", !heavyRainLockout,
-                heavyRainLockout ? $"{Math.Round(rainDuringLockout, 2):F2} mm reached the {Math.Max(0, options.MowingHeavyRainThresholdMm):F2} mm threshold." : $"{Math.Round(rainDuringLockout, 2):F2} mm is below the {Math.Max(0, options.MowingHeavyRainThresholdMm):F2} mm threshold.")
+                heavyRainLockout ? $"{Math.Round(rainDuringLockout, 2):F2} mm reached the {Math.Max(0, options.MowingHeavyRainThresholdMm):F2} mm threshold." : $"{Math.Round(rainDuringLockout, 2):F2} mm is below the {Math.Max(0, options.MowingHeavyRainThresholdMm):F2} mm threshold."),
+            new IrrigationDecisionCheck("Rainfall timing", !rainfallTimingUncertain,
+                rainfallTimingUncertain ? "Rainfall amount is known, but a counter reset or long observation gap makes its timing uncertain within a safety window." : "Rainfall counter changes are bounded by sufficiently recent observations in the safety windows.")
         };
 
         var status = new LawnDryStatus(
@@ -171,6 +175,18 @@ public sealed class LawnDryService
             total += delta >= 0 ? delta : Math.Max(0, window[i].RainfallMm);
         }
         return total;
+    }
+
+    internal static bool HasUncertainRainfallInterval(IReadOnlyList<WeatherObservation> observations, DateTimeOffset start, DateTimeOffset end)
+    {
+        for (var index = 1; index < observations.Count; index++)
+        {
+            var previous = observations[index - 1].Timestamp;
+            var current = observations[index].Timestamp;
+            if (previous is null || current is null || !observations[index].RainfallTimingUncertain) continue;
+            if (current > start && previous < end) return true;
+        }
+        return false;
     }
 
 }
