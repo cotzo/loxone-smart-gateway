@@ -6,6 +6,26 @@ namespace service.tests;
 public sealed class MowingWetnessServiceTests
 {
     [Fact]
+    public void WeatherHistory_ReadinessRequiresUsefulContinuousSpan()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var options = new IrrigationConfiguration
+        {
+            MowingMaximumWeatherAgeMinutes = 10,
+            MowingMaximumDryingGapMinutes = 15,
+            LawnDryMinimumWeatherHistoryMinutes = 30
+        };
+        WeatherObservation Observation(DateTimeOffset at) => new(20, 50, 1000, 5, 10000, 0, at);
+
+        Assert.False(LawnDryService.HasSufficientWeatherHistory(
+            [Observation(now.AddMinutes(-6)), Observation(now)], now, options));
+        Assert.False(LawnDryService.HasSufficientWeatherHistory(
+            [Observation(now.AddMinutes(-40)), Observation(now.AddMinutes(-5)), Observation(now)], now, options));
+        Assert.True(LawnDryService.HasSufficientWeatherHistory(
+            [Observation(now.AddMinutes(-32)), Observation(now.AddMinutes(-24)), Observation(now.AddMinutes(-16)),
+                Observation(now.AddMinutes(-8)), Observation(now)], now, options));
+    }
+    [Fact]
     public void Drying_IsFasterInSunnyHotDryWindyWeather()
     {
         var options = new IrrigationConfiguration { LuxPerWattM2 = 120 };

@@ -69,7 +69,9 @@ public sealed class LawnDryService
             new IrrigationDecisionCheck("Weather freshness", weatherFresh,
                 weatherFresh ? $"Latest committed sample: {latestText}; limit {Math.Max(1, options.MowingMaximumWeatherAgeMinutes)} min." : $"Latest committed sample is missing or older than {Math.Max(1, options.MowingMaximumWeatherAgeMinutes)} min ({latestText})."),
             new IrrigationDecisionCheck("Weather history", historyReady,
-                historyReady ? "At least two ordered weather samples are available." : "At least two ordered, sufficiently recent weather samples are required."),
+                historyReady
+                    ? $"Continuous recent history spans at least {Math.Max(1, options.LawnDryMinimumWeatherHistoryMinutes)} min with no gap over {Math.Max(1, options.MowingMaximumDryingGapMinutes)} min."
+                    : $"Need at least {Math.Max(1, options.LawnDryMinimumWeatherHistoryMinutes)} min of continuous recent history with no gap over {Math.Max(1, options.MowingMaximumDryingGapMinutes)} min."),
             new IrrigationDecisionCheck("Surface wetness", wetnessAllowed,
                 $"Estimated {Math.Round(wetnessMm, 2):F2} mm; allowed maximum {threshold:F2} mm."),
             new IrrigationDecisionCheck("Rain now", !rainingNow,
@@ -101,7 +103,24 @@ public sealed class LawnDryService
         var latest = observations[^1].Timestamp;
         if (latest is null || latest < now.AddMinutes(-Math.Max(1, options.MowingMaximumWeatherAgeMinutes))) return false;
         var previous = observations.Take(observations.Count - 1).LastOrDefault(x => x.Timestamp is not null);
-        return previous?.Timestamp is not null && latest.Value > previous.Timestamp.Value;
+        if (previous?.Timestamp is null || latest.Value <= previous.Timestamp.Value) return false;
+
+        // A fresh pair only proves the sensor is alive; it is not enough history to
+        // estimate drying. Require a bounded, continuous recent span. Long gaps break
+        // continuity instead of allowing a stale pair to certify readiness.
+        var minimumSpan = TimeSpan.FromMinutes(Math.Max(1, options.LawnDryMinimumWeatherHistoryMinutes));
+        var maximumGap = TimeSpan.FromMinutes(Math.Max(1, options.MowingMaximumDryingGapMinutes));
+        var spanStart = latest.Value;
+        for (var index = observations.Count - 1; index > 0; index--)
+        {
+            var currentTime = observations[index].Timestamp;
+            var previousTime = observations[index - 1].Timestamp;
+            if (currentTime is null || previousTime is null) continue;
+            if (currentTime.Value - previousTime.Value > maximumGap) break;
+            spanStart = previousTime.Value;
+            if (latest.Value - spanStart >= minimumSpan) return true;
+        }
+        return false;
     }
 
     internal static double CalculateSurfaceWetnessMm(IReadOnlyList<WeatherObservation> observations, IReadOnlyList<IrrigationRun> lawnRuns, DateTimeOffset cutoff, DateTimeOffset now, IrrigationConfiguration options)

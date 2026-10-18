@@ -37,6 +37,7 @@ public sealed class IrrigationConfiguration
     public int MowingHeavyRainLockoutHours { get; set; } = 12;
     public int MowingMaximumDryingGapMinutes { get; set; } = 30;
     public int MowingMaximumWeatherAgeMinutes { get; set; } = 10;
+    public int LawnDryMinimumWeatherHistoryMinutes { get; set; } = 30;
     public double MowingDryingFactor { get; set; } = 1.0;
 
     public List<IrrigationZoneConfiguration> Zones { get; set; } = [];
