@@ -136,15 +136,9 @@ public sealed record IrrigationStoredData(
 public sealed record IrrigationDashboardSnapshot(
     IrrigationConfiguration Configuration,
     IrrigationStoredData Stored,
-    IrrigationWeatherInputState PendingWeather,
     IReadOnlyList<string> ActiveZoneIds,
     IrrigationResult Decision,
     MowingStatus Mowing);
-
-public sealed record IrrigationWeatherInputState(
-    IReadOnlyDictionary<string, double?> Values,
-    IReadOnlyDictionary<string, DateTimeOffset> UpdatedAt,
-    bool Complete);
 
 internal sealed class IrrigationState
 {

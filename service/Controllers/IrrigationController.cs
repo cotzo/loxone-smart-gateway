@@ -7,24 +7,8 @@ namespace loxone.smart.gateway.Controllers;
 [Route("[controller]")]
 public sealed class IrrigationController(
     IrrigationService service,
-    WeatherIngestionService weatherIngestion,
     MowingWetnessService mowingWetness) : ControllerBase
 {
-    [HttpGet("weather/{field}/{value:double}")]
-    public async Task<IActionResult> SetWeatherValue(string field, double value, CancellationToken cancellationToken)
-    {
-        if (!double.IsFinite(value)) return BadRequest("Weather value must be a finite number.");
-        var updated = await weatherIngestion.SetAsync(field, value, cancellationToken);
-        return updated ? Ok() : BadRequest("Unknown weather field. Use temperature, humidity, pressure, wind, light, or rainfall.");
-    }
-
-    [HttpGet("weather/commit")]
-    public async Task<IActionResult> CommitWeather(CancellationToken cancellationToken)
-    {
-        var committed = await weatherIngestion.CommitAsync(cancellationToken);
-        return committed ? Ok() : BadRequest("Weather sample is incomplete. Set all six weather values before commit.");
-    }
-
     [HttpGet]
     public Task<IrrigationResult> Get(CancellationToken cancellationToken) => service.CalculateAsync(cancellationToken);
     [HttpGet("irrigate")]

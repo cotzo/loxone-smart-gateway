@@ -11,7 +11,6 @@ public sealed class GatewayController(
     LoxoneIntegration loxone,
     DeviceIntegrations devices,
     IrrigationService irrigation,
-    WeatherIngestionService weatherIngestion,
     IrrigationRunTracker irrigationRunTracker,
     MowingWetnessService mowingWetness,
     IrrigationLoxoneService irrigationLoxone) : ControllerBase
@@ -170,13 +169,11 @@ public sealed class GatewayController(
     {
         var decision = await irrigation.CalculateAsync(cancellationToken);
         var stored = await irrigation.GetStoredDataAsync(cancellationToken);
-        var pending = await weatherIngestion.GetPendingSnapshotAsync(cancellationToken);
         var activeZoneIds = await irrigationRunTracker.GetActiveZoneIdsAsync(cancellationToken);
         var mowing = await mowingWetness.GetStatusAsync(cancellationToken);
         return Ok(new IrrigationDashboardSnapshot(
             store.GetSnapshot().Settings.Irrigation,
             stored,
-            pending,
             activeZoneIds,
             decision,
             mowing));
