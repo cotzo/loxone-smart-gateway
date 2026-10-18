@@ -12,8 +12,8 @@ public sealed class MowingWetnessServiceTests
         var dry = new WeatherObservation(30, 35, 950, 12, 60000, 0);
         var wet = new WeatherObservation(15, 90, 950, 1, 500, 0);
 
-        var dryRate = MowingWetnessService.EstimateDryingMm(dry, dry, 1, options);
-        var wetRate = MowingWetnessService.EstimateDryingMm(wet, wet, 1, options);
+        var dryRate = LawnDryService.EstimateDryingMm(dry, dry, 1, options);
+        var wetRate = LawnDryService.EstimateDryingMm(wet, wet, 1, options);
 
         Assert.True(dryRate > wetRate);
         Assert.InRange(dryRate, 0, 0.6);
@@ -34,7 +34,7 @@ public sealed class MowingWetnessServiceTests
             new IrrigationRun("1", "V6", "LawnSouth", "Irrigation", 600, 3, start.AddMinutes(10), start.AddMinutes(20))
         };
 
-        var wetness = MowingWetnessService.CalculateSurfaceWetnessMm(
+        var wetness = LawnDryService.CalculateSurfaceWetnessMm(
             observations, runs, start, start.AddHours(1), options);
 
         Assert.Equal(5, wetness, 6);
@@ -52,6 +52,6 @@ public sealed class MowingWetnessServiceTests
             new WeatherObservation(20, 70, 950, 0, 0, 1.5, start.AddMinutes(3))
         };
 
-        Assert.Equal(2.5, MowingWetnessService.RainForPeriod(observations, start, start.AddMinutes(4)), 6);
+        Assert.Equal(2.5, LawnDryService.RainForPeriod(observations, start, start.AddMinutes(4)), 6);
     }
 }
