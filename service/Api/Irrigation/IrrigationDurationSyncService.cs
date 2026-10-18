@@ -14,6 +14,8 @@ public sealed class IrrigationDurationSyncService(
 {
     private const string OffValue = "-1";
     private string? _lastAppliedSignature;
+    private string? _resolvedControlUuid;
+    private string? _resolvedControlKey;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -31,12 +33,6 @@ public sealed class IrrigationDurationSyncService(
         var settings = store.GetSnapshot().Settings;
         var block = settings.Irrigation.LoxoneBlock;
         if (block is null) return;
-        if (string.IsNullOrWhiteSpace(block.ControlUuid))
-        {
-            Log.Warning("Cannot synchronize irrigation durations for {Control}: the imported block has no Loxone control UUID. Refresh Loxone resources and re-import the block", block.Control);
-            return;
-        }
-
         var zones = settings.Irrigation.Zones
             .Where(zone => zone.LoxoneBlockId.Equals(IrrigationLoxoneService.MakeBlockIdForSync(block.ServerId, block.Control), StringComparison.OrdinalIgnoreCase))
             .Where(zone => !string.IsNullOrWhiteSpace(zone.LoxoneZoneId))
@@ -48,16 +44,41 @@ public sealed class IrrigationDurationSyncService(
         var durations = zones.ToDictionary(zone => zone.LoxoneZoneId,
             zone => decision.LocalDataComplete && results.TryGetValue(zone.Id, out var result) ? result.RuntimeSeconds : 0,
             StringComparer.OrdinalIgnoreCase);
-        var signature = $"{block.ServerId}|{block.ControlUuid}|" +
-            string.Join(";", durations.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase).Select(x => $"{x.Key}={x.Value}"));
-        if (signature == _lastAppliedSignature) return;
-
         var server = settings.LoxoneServers.FirstOrDefault(x => x.Id.Equals(block.ServerId, StringComparison.OrdinalIgnoreCase));
         if (server is null)
         {
             Log.Warning("Cannot synchronize irrigation durations: Miniserver {ServerId} is no longer configured", block.ServerId);
             return;
         }
+
+        var controlUuid = block.ControlUuid;
+        if (string.IsNullOrWhiteSpace(controlUuid))
+            controlUuid = settings.LoxoneStateCatalogs.Values.SelectMany(x => x.States)
+                .FirstOrDefault(x => x.ServerId.Equals(block.ServerId, StringComparison.OrdinalIgnoreCase) &&
+                                     x.Control.Equals(block.Control, StringComparison.OrdinalIgnoreCase) &&
+                                     !string.IsNullOrWhiteSpace(x.ControlUuid))?.ControlUuid;
+        var controlKey = $"{block.ServerId}|{block.Control}";
+        if (string.IsNullOrWhiteSpace(controlUuid) && _resolvedControlKey == controlKey) controlUuid = _resolvedControlUuid;
+        if (string.IsNullOrWhiteSpace(controlUuid))
+        {
+            Log.Information("Resolving writable control UUID for imported irrigation block {Control}", block.Control);
+            var discovered = await loxone.DiscoverAsync(server, cancellationToken);
+            controlUuid = discovered.FirstOrDefault(x =>
+                x.ServerId.Equals(block.ServerId, StringComparison.OrdinalIgnoreCase) &&
+                x.Control.Equals(block.Control, StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(x.ControlUuid))?.ControlUuid;
+            if (string.IsNullOrWhiteSpace(controlUuid))
+            {
+                Log.Warning("Cannot synchronize irrigation durations for {Control}: discovery did not return a writable control UUID", block.Control);
+                return;
+            }
+            _resolvedControlUuid = controlUuid;
+            _resolvedControlKey = controlKey;
+        }
+
+        var signature = $"{block.ServerId}|{controlUuid}|" +
+            string.Join(";", durations.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase).Select(x => $"{x.Key}={x.Value}"));
+        if (signature == _lastAppliedSignature) return;
 
         var stateValues = await loxone.ReadStatesOnceAsync(server,
             new HashSet<string>([block.ActiveStateUuid, block.CurrentZoneStateUuid], StringComparer.OrdinalIgnoreCase), cancellationToken);
@@ -70,7 +91,9 @@ public sealed class IrrigationDurationSyncService(
             return;
         }
 
-        await loxone.SetIrrigationDurationsAsync(server, block.ControlUuid, durations, cancellationToken);
+        Log.Information("Sending irrigation durations for {Control} to Loxone: {Durations}", block.Control,
+            string.Join(";", durations.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase).Select(x => $"{x.Key}={x.Value}")));
+        await loxone.SetIrrigationDurationsAsync(server, controlUuid, durations, cancellationToken);
         _lastAppliedSignature = signature;
         if (!decision.LocalDataComplete)
             Log.Warning("Weather coverage is incomplete; set all irrigation durations on {Control} to 0", block.Control);
