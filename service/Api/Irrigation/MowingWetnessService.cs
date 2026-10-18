@@ -4,11 +4,13 @@ public sealed class LawnDryService
 {
     private readonly IrrigationService _irrigation;
     private readonly IrrigationRunTracker _runTracker;
+    private readonly IrrigationMetrics _metrics;
 
-    public LawnDryService(IrrigationService irrigation, IrrigationRunTracker runTracker)
+    public LawnDryService(IrrigationService irrigation, IrrigationRunTracker runTracker, IrrigationMetrics metrics)
     {
         _irrigation = irrigation;
         _runTracker = runTracker;
+        _metrics = metrics;
     }
 
     public async Task<LawnDryStatus> GetStatusAsync(CancellationToken cancellationToken)
@@ -78,7 +80,7 @@ public sealed class LawnDryService
                 heavyRainLockout ? $"{Math.Round(rainDuringLockout, 2):F2} mm reached the {Math.Max(0, options.MowingHeavyRainThresholdMm):F2} mm threshold." : $"{Math.Round(rainDuringLockout, 2):F2} mm is below the {Math.Max(0, options.MowingHeavyRainThresholdMm):F2} mm threshold.")
         };
 
-        return new LawnDryStatus(
+        var status = new LawnDryStatus(
             allowed,
             Math.Round(wetnessMm, 2),
             Math.Round(threshold, 2),
@@ -89,6 +91,8 @@ public sealed class LawnDryService
             Math.Round(rainDuringLockout, 2),
             now,
             checks);
+        _metrics.RecordLawnDryDecision(status);
+        return status;
     }
 
     internal static bool HasSufficientWeatherHistory(IReadOnlyList<WeatherObservation> observations, DateTimeOffset now, IrrigationConfiguration options)

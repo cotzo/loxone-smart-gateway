@@ -35,10 +35,31 @@ if (enablePrometheus)
     builder.Services.AddOpenTelemetry().WithMetrics(metrics =>
     {
         metrics.AddPrometheusExporter();
-        metrics.AddMeter("Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Server.Kestrel", "PhilipsHue", "Tuya");
+        metrics.AddMeter("Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Server.Kestrel", "PhilipsHue", "Tuya",
+            GatewayMetrics.MeterName, IrrigationMetrics.MeterName);
         metrics.AddView("http.server.request.duration", new ExplicitBucketHistogramConfiguration
         {
             Boundaries = [0, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10]
+        });
+        metrics.AddView("gateway.provider.queue.wait", new ExplicitBucketHistogramConfiguration
+        {
+            Boundaries = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000]
+        });
+        metrics.AddView("gateway.provider.request.duration", new ExplicitBucketHistogramConfiguration
+        {
+            Boundaries = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000]
+        });
+        metrics.AddView("gateway.provider.event.to.dispatch", new ExplicitBucketHistogramConfiguration
+        {
+            Boundaries = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000]
+        });
+        metrics.AddView("irrigation.weather.observation.interval", new ExplicitBucketHistogramConfiguration
+        {
+            Boundaries = [60, 120, 300, 600, 900, 1800, 3600, 10800, 21600, 43200, 86400]
+        });
+        metrics.AddView("irrigation.run.duration", new ExplicitBucketHistogramConfiguration
+        {
+            Boundaries = [1, 10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200]
         });
     });
 }
@@ -50,6 +71,8 @@ builder.Services.AddControllers().AddJsonOptions(options =>
     options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddOpenApi();
 builder.Services.AddSingleton<GatewayStateStore>();
+builder.Services.AddSingleton<GatewayMetrics>();
+builder.Services.AddSingleton<IrrigationMetrics>();
 builder.Services.AddSingleton<LoxoneIntegration>();
 builder.Services.AddSingleton<DeviceIntegrations>();
 builder.Services.AddHostedService<GatewayRuntimeService>();

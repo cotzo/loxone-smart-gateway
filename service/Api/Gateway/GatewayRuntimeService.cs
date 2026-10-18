@@ -9,6 +9,7 @@ public sealed class GatewayRuntimeService(
     GatewayStateStore store,
     LoxoneIntegration loxone,
     DeviceIntegrations devices,
+    GatewayMetrics metrics,
     loxone.smart.gateway.Api.Irrigation.IrrigationLoxoneService irrigationLoxone,
     loxone.smart.gateway.Api.Irrigation.IrrigationWeatherStateService irrigationWeather) : BackgroundService
 {
@@ -18,7 +19,7 @@ public sealed class GatewayRuntimeService(
         {
             var (settings, version) = store.GetSnapshot();
             using var generation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-            await using var dispatcher = new GatewayCommandDispatcher(store, devices, generation.Token);
+            await using var dispatcher = new GatewayCommandDispatcher(store, devices, metrics, generation.Token);
             var workers = settings.LoxoneServers.Select(server => RunServerLoopAsync(server, dispatcher, generation.Token)).ToArray();
             try
             {

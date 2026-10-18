@@ -9,11 +9,14 @@ namespace loxone.smart.gateway.Api.Gateway;
 /// </summary>
 internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
 {
-    private sealed record Work(string TargetKey, TCommand Command, long Version, int Attempts);
+    private sealed record Work(string TargetKey, TCommand Command, long Version, int Attempts, DateTimeOffset EnqueuedAt);
 
     private readonly Func<TCommand, CancellationToken, Task> _send;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly TimeSpan _minimumSendInterval;
+    private readonly GatewayMetrics _metrics;
+    private readonly string _provider;
+    private readonly string _resourceType;
     private readonly CancellationTokenSource _stop;
     private readonly Channel<string> _ready = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
     {
@@ -34,11 +37,17 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
         TimeSpan minimumSendInterval,
         CancellationToken cancellationToken,
         string queueName,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        GatewayMetrics? metrics = null,
+        string provider = "unknown",
+        string resourceType = "unknown")
     {
         _send = send;
         _delay = delay ?? ((duration, token) => Task.Delay(duration, token));
         _minimumSendInterval = minimumSendInterval;
+        _metrics = metrics ?? new GatewayMetrics();
+        _provider = provider;
+        _resourceType = resourceType;
         QueueName = queueName;
         _stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _worker = RunAsync();
@@ -53,8 +62,10 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
             if (_stop.IsCancellationRequested) return;
 
             var version = ++_nextVersion;
+            var replaced = _pending.ContainsKey(targetKey);
             _latestVersions[targetKey] = version;
-            _pending[targetKey] = new Work(targetKey, command, version, 0);
+            _pending[targetKey] = new Work(targetKey, command, version, 0, DateTimeOffset.UtcNow);
+            _metrics.RecordEnqueued(_provider, _resourceType, replaced);
             ScheduleLocked(targetKey);
         }
     }
@@ -81,6 +92,7 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
                     _pending.Remove(targetKey, out work);
                 }
                 if (work is null) continue;
+                _metrics.RecordDequeued(_provider, _resourceType);
 
                 var wait = _minimumSendInterval - (DateTimeOffset.UtcNow - _lastSendStartedAt);
                 if (wait > TimeSpan.Zero)
@@ -92,6 +104,8 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
                         continue;
                     _lastSendStartedAt = DateTimeOffset.UtcNow;
                 }
+
+                _metrics.RecordQueueWait(_provider, _resourceType, (DateTimeOffset.UtcNow - work.EnqueuedAt).TotalMilliseconds);
 
                 try
                 {
@@ -115,6 +129,7 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
         var attempts = work.Attempts + 1;
         if (attempts >= 10)
         {
+            _metrics.RecordFailure(_provider, _resourceType);
             Log.Error(exception, "Provider lane {Queue} failed target {Target} after {Attempts} attempts; dropping command",
                 QueueName, work.TargetKey, attempts);
             return;
@@ -130,6 +145,7 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
         }
 
         var delaySeconds = Math.Min(60, Math.Pow(2, Math.Min(attempts, 6)));
+        _metrics.RecordRetry(_provider, _resourceType);
         Log.Warning(exception, "Provider lane {Queue} failed target {Target} on attempt {Attempt}; retrying in {RetryDelaySeconds:F0} s",
             QueueName, work.TargetKey, attempts, delaySeconds);
         var retryTask = RetryAfterDelayAsync(work with { Attempts = attempts }, TimeSpan.FromSeconds(delaySeconds));
@@ -152,7 +168,8 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
                     _pending.ContainsKey(retry.TargetKey))
                     return;
 
-                _pending[retry.TargetKey] = retry;
+                _pending[retry.TargetKey] = retry with { EnqueuedAt = DateTimeOffset.UtcNow };
+                _metrics.RecordEnqueued(_provider, _resourceType, replaced: false);
                 ScheduleLocked(retry.TargetKey);
             }
         }
@@ -167,7 +184,14 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
         catch (OperationCanceledException) { }
 
         Task[] retries;
-        lock (_sync) retries = [.. _retryTasks];
+        lock (_sync)
+        {
+            retries = [.. _retryTasks];
+            var remaining = _pending.Count;
+            _pending.Clear();
+            for (var index = 0; index < remaining; index++)
+                _metrics.RecordDequeued(_provider, _resourceType);
+        }
         try { await Task.WhenAll(retries); }
         catch (OperationCanceledException) { }
         _stop.Dispose();

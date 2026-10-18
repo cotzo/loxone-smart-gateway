@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using loxone.smart.gateway.Api.Gateway;
 using Serilog;
 
@@ -8,6 +9,7 @@ public sealed class IrrigationService
 {
     private IrrigationConfiguration _options;
     private readonly OpenMeteoForecastClient _forecast;
+    private readonly IrrigationMetrics _metrics;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private IrrigationState _state;
     private ForecastSummary? _cachedForecast;
@@ -15,10 +17,11 @@ public sealed class IrrigationService
     private DateTimeOffset _forecastRefreshAfter;
     private DateTimeOffset _forecastValidUntil;
 
-    public IrrigationService(GatewayStateStore settingsStore, OpenMeteoForecastClient forecast)
+    public IrrigationService(GatewayStateStore settingsStore, OpenMeteoForecastClient forecast, IrrigationMetrics? metrics = null)
     {
         _options = settingsStore.GetSnapshot().Settings.Irrigation;
         _forecast = forecast;
+        _metrics = metrics ?? new IrrigationMetrics();
         _state = LoadState();
 
         foreach (var group in GetConfiguredGroups())
@@ -26,6 +29,8 @@ public sealed class IrrigationService
 
         CleanupIrrigationRuns(DateTimeOffset.UtcNow);
         WarnAboutInconsistentBalanceGroups();
+        _metrics.UpdateStoredData(new IrrigationStoredData(_state.Observations, _state.BalanceDeficitMm,
+            _state.LastBalancedLocalDate, _state.IrrigationRuns, _state.Observations.Count));
     }
 
     public void UpdateConfiguration(IrrigationConfiguration configuration) =>
@@ -44,12 +49,15 @@ public sealed class IrrigationService
                 await PersistAsync(cancellationToken);
             var observations = _state.Observations.OrderBy(x => x.Timestamp).ToList();
             var runs = _state.IrrigationRuns.OrderByDescending(x => x.EndedAt).ToList();
-            return new IrrigationStoredData(
+            var stored = new IrrigationStoredData(
                 observationLimit <= 0 ? observations : observations.TakeLast(observationLimit).ToList(),
                 new Dictionary<string, double>(_state.BalanceDeficitMm, StringComparer.OrdinalIgnoreCase),
                 _state.LastBalancedLocalDate,
                 runLimit <= 0 ? runs : runs.Take(runLimit).ToList(),
                 observations.Count);
+            _metrics.UpdateStoredData(new IrrigationStoredData(_state.Observations, _state.BalanceDeficitMm,
+                _state.LastBalancedLocalDate, _state.IrrigationRuns, _state.Observations.Count));
+            return stored;
         }
         finally
         {
@@ -72,6 +80,8 @@ public sealed class IrrigationService
             if (timestamp < receivedAt - allowedSkew || timestamp > receivedAt + allowedSkew)
                 timestamp = receivedAt;
 
+            var previousTimestamp = _state.Observations.Select(x => x.Timestamp).Where(x => x is not null)
+                .Select(x => x!.Value).DefaultIfEmpty().Max();
             _state.Observations.Add(observation with
             {
                 Timestamp = timestamp,
@@ -83,6 +93,9 @@ public sealed class IrrigationService
             _state.Observations.RemoveAll(x => (x.Timestamp ?? DateTimeOffset.MinValue) < receivedAt.AddDays(-8));
             CleanupIrrigationRuns(receivedAt);
             await PersistAsync(cancellationToken);
+            _metrics.RecordObservation(timestamp, previousTimestamp == default ? null : previousTimestamp, _state.Observations.Count);
+            _metrics.UpdateStoredData(new IrrigationStoredData(_state.Observations, _state.BalanceDeficitMm,
+                _state.LastBalancedLocalDate, _state.IrrigationRuns, _state.Observations.Count));
         }
         finally
         {
@@ -128,6 +141,7 @@ public sealed class IrrigationService
 
             CleanupIrrigationRuns(endedAt);
             await PersistAsync(cancellationToken);
+            _metrics.RecordRun(runtimeSeconds, appliedMm);
             return true;
         }
         finally
@@ -153,6 +167,7 @@ public sealed class IrrigationService
 
     public async Task<IrrigationResult> CalculateAsync(CancellationToken cancellationToken)
     {
+        var calculationTimer = Stopwatch.StartNew();
         List<WeatherObservation> observations;
         Dictionary<string, double> balances;
 
@@ -222,7 +237,7 @@ public sealed class IrrigationService
             : zoneResults.Count == 0
                 ? "No irrigation zones are configured."
                 : "No zones currently require watering at the configured trigger.";
-        return new IrrigationResult(
+        var result = new IrrigationResult(
             irrigate,
             localDataComplete,
             Math.Round(et0, 2),
@@ -236,6 +251,9 @@ public sealed class IrrigationService
             Math.Round(effectiveForecastRain, 2),
             _forecastAvailable,
             decisionSummary);
+        calculationTimer.Stop();
+        _metrics.RecordDecision(result.Irrigate, result.LocalDataComplete, result.ForecastAvailable, calculationTimer.Elapsed.TotalMilliseconds);
+        return result;
     }
 
     private bool AccumulateCompletedDays(DateTimeOffset nowUtc)

@@ -46,6 +46,25 @@ Irrigation weather values, zone activity, recommended durations, and the `Irriga
 
 The old unauthenticated `/Irrigation/...`, `/PhilipsHue/...`, and `/Tuya/...` routes are not part of the current API. `/health` is available for container health checks. Prometheus metrics are available at `/metrics` when `Configuration__EnablePrometheus=true`.
 
+### Prometheus metrics
+
+Provider metrics use only bounded labels (`provider`, Hue `resource_type`, and command `outcome`); they deliberately omit mapping, device, bridge, zone, and datapoint IDs.
+
+- `gateway_provider_queue_wait` — histogram, enqueue to send start, including queue pacing.
+- `gateway_provider_event_to_dispatch` — histogram, Loxone state receipt to provider send start.
+- `gateway_provider_request_duration` — histogram, Hue HTTP request or full Tuya local connect-and-send duration.
+- `gateway_provider_commands` — counter by provider/resource type and success, failure, or invalid input outcome.
+- `gateway_provider_commands_coalesced`, `gateway_provider_command_retries`, `gateway_provider_command_failures` — replaced pending values, scheduled retries, and commands dropped after exhausting retries.
+- `gateway_provider_queue_pending` — current unique pending commands.
+- `irrigation_weather_observations_committed`, `irrigation_weather_observation_interval` — committed observation count and spacing.
+- `irrigation_weather_observations_stored`, `irrigation_weather_latest_age`, `irrigation_weather_history_span` — retained weather history size, freshness, and time coverage.
+- `irrigation_runs_completed`, `irrigation_run_duration`, `irrigation_run_water_applied`, `irrigation_runs_stored` — completed irrigation activity and retained run history.
+- `irrigation_balance_groups` — configured water-balance group count.
+- `irrigation_decision_required`, `irrigation_decision_weather_complete`, `irrigation_decision_forecast_available`, `irrigation_decision_latest_age`, `irrigation_decision_calculation_duration` — latest decision state and calculation latency.
+- `irrigation_lawn_dry_allowed`, `irrigation_lawn_dry_surface_wetness`, `irrigation_lawn_dry_weather_fresh`, `irrigation_lawn_dry_raining`, `irrigation_lawn_dry_irrigation_running`, `irrigation_lawn_dry_heavy_rain_lockout` — latest Lawn Dry output and main blocking conditions.
+
+Prometheus applies its normal `_bucket`, `_sum`, and `_count` suffixes to histograms. An age gauge is `0` until its first observation/calculation.
+
 ## Development
 
 For tracked implementation findings and future work, see the [GitHub issues](https://github.com/cotzo/loxone-smart-gateway/issues).

@@ -8,7 +8,7 @@ using Serilog;
 
 namespace loxone.smart.gateway.Api.Gateway;
 
-public sealed class DeviceIntegrations(IHttpClientFactory clients)
+public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetrics? metrics = null)
 {
     public async Task<IReadOnlyList<HueResource>> GetHueResourcesAsync(HueSettings bridge, CancellationToken cancellationToken)
     {
@@ -142,12 +142,27 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
         var requestDuration = Stopwatch.StartNew();
         if (sourceReceivedAt is not null)
             Log.Information("Sending Hue command for mapping {mapping} to target {targetId}; event-to-Hue-send delay {EventToSendMs:F1} ms", mapping.Name, mapping.TargetId, (sendStartedAt - sourceReceivedAt.Value).TotalMilliseconds);
-        using var response = await client.PutAsync($"/clip/v2/resource/{mapping.HueResourceType}/{Uri.EscapeDataString(mapping.TargetId)}", content, cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var resourceType = mapping.HueResourceType.Equals("grouped_light", StringComparison.OrdinalIgnoreCase) ? "grouped_light" : "light";
+        HttpResponseMessage responseMessage;
+        string responseBody;
+        try
+        {
+            responseMessage = await client.PutAsync($"/clip/v2/resource/{mapping.HueResourceType}/{Uri.EscapeDataString(mapping.TargetId)}", content, cancellationToken);
+            using (responseMessage)
+                responseBody = await responseMessage.Content.ReadAsStringAsync(cancellationToken);
+        }
+        catch
+        {
+            requestDuration.Stop();
+            metrics?.RecordRequestDuration("hue", resourceType, requestDuration.Elapsed.TotalMilliseconds, "failure");
+            throw;
+        }
         requestDuration.Stop();
-        Log.Information("Hue command response for mapping {mapping} from target {targetId}: HTTP {StatusCode}; request duration {RequestDurationMs:F1} ms", mapping.Name, mapping.TargetId, (int)response.StatusCode, requestDuration.Elapsed.TotalMilliseconds);
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException($"Hue returned {(int)response.StatusCode} ({response.StatusCode}): {responseBody}");
+        var outcome = responseMessage.IsSuccessStatusCode ? "success" : "http_error";
+        metrics?.RecordRequestDuration("hue", resourceType, requestDuration.Elapsed.TotalMilliseconds, outcome);
+        Log.Information("Hue command response for mapping {mapping} from target {targetId}: HTTP {StatusCode}; request duration {RequestDurationMs:F1} ms", mapping.Name, mapping.TargetId, (int)responseMessage.StatusCode, requestDuration.Elapsed.TotalMilliseconds);
+        if (!responseMessage.IsSuccessStatusCode)
+            throw new HttpRequestException($"Hue returned {(int)responseMessage.StatusCode} ({responseMessage.StatusCode}): {responseBody}");
 
         // Hue CLIP v2 can return HTTP 200 while reporting a rejected command in `errors`.
         // Treat that as a failure so the mapping is retried and the actual bridge error is visible.
@@ -184,11 +199,21 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
     {
         var stopwatch = Stopwatch.StartNew();
         Log.Information("Sending Tuya command to {device} ({ip}), DP {dp}: JSON {JsonType} {Value}", device.Name, device.IP, dp, value.ValueKind, value.GetRawText());
-        using var connection = new TuyaLocalConnection(ToTuyaConfiguration(device));
-        await connection.ConnectAsync(cancellationToken);
-        await connection.SetDataPointAsync(dp, value, cancellationToken);
-        stopwatch.Stop();
-        Log.Information("Tuya command send completed for {device} DP {dp} in {DurationMs:F1} ms; acknowledgement is best-effort", device.Name, dp, stopwatch.Elapsed.TotalMilliseconds);
+        try
+        {
+            using var connection = new TuyaLocalConnection(ToTuyaConfiguration(device));
+            await connection.ConnectAsync(cancellationToken);
+            await connection.SetDataPointAsync(dp, value, cancellationToken);
+            stopwatch.Stop();
+            metrics?.RecordRequestDuration("tuya", "device", stopwatch.Elapsed.TotalMilliseconds, "success");
+            Log.Information("Tuya command send completed for {device} DP {dp} in {DurationMs:F1} ms; acknowledgement is best-effort", device.Name, dp, stopwatch.Elapsed.TotalMilliseconds);
+        }
+        catch
+        {
+            stopwatch.Stop();
+            metrics?.RecordRequestDuration("tuya", "device", stopwatch.Elapsed.TotalMilliseconds, "failure");
+            throw;
+        }
     }
 
     private HttpClient CreateHueClient(HueSettings bridge)
