@@ -12,6 +12,7 @@ public sealed class IrrigationService
     private readonly IrrigationMetrics _metrics;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private IrrigationState _state;
+    private WeatherObservation? _latestObservation;
     private ForecastSummary? _cachedForecast;
     private bool _forecastAvailable;
     private DateTimeOffset _forecastRefreshAfter;
@@ -23,6 +24,9 @@ public sealed class IrrigationService
         _forecast = forecast;
         _metrics = metrics ?? new IrrigationMetrics();
         _state = LoadState();
+        _latestObservation = _state.Observations
+            .Where(x => x.Timestamp is not null)
+            .MaxBy(x => x.Timestamp);
 
         foreach (var group in GetConfiguredGroups())
             _state.BalanceDeficitMm.TryAdd(group.Key, 0);
@@ -65,8 +69,7 @@ public sealed class IrrigationService
         }
     }
 
-    public WeatherObservation? GetLatestObservation() =>
-        _state.Observations.OrderByDescending(x => x.Timestamp).FirstOrDefault();
+    public WeatherObservation? GetLatestObservation() => Volatile.Read(ref _latestObservation);
 
     public async Task AddObservationAsync(WeatherObservation observation, CancellationToken cancellationToken)
     {
@@ -91,6 +94,9 @@ public sealed class IrrigationService
 
             AccumulateCompletedDays(receivedAt);
             _state.Observations.RemoveAll(x => (x.Timestamp ?? DateTimeOffset.MinValue) < receivedAt.AddDays(-8));
+            Volatile.Write(ref _latestObservation, _state.Observations
+                .Where(x => x.Timestamp is not null)
+                .MaxBy(x => x.Timestamp));
             CleanupIrrigationRuns(receivedAt);
             await PersistAsync(cancellationToken);
             _metrics.RecordObservation(timestamp, previousTimestamp == default ? null : previousTimestamp, _state.Observations.Count);
