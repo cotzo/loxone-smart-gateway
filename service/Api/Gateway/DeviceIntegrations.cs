@@ -1,8 +1,10 @@
 using System.Globalization;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using loxone.smart.gateway.Api.PhilipsHue;
 using loxone.smart.gateway.Api.Tuya;
+using Serilog;
 
 namespace loxone.smart.gateway.Api.Gateway;
 
@@ -110,7 +112,7 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<bool> SendHueAsync(HueSettings bridge, DeviceMapping mapping, JsonElement value, CancellationToken cancellationToken)
+    public async Task<bool> SendHueAsync(HueSettings bridge, DeviceMapping mapping, JsonElement value, CancellationToken cancellationToken, DateTimeOffset? sourceReceivedAt = null)
     {
         using var client = CreateHueClient(bridge);
         var lightType = mapping.HueLightType;
@@ -136,8 +138,14 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
 
         var command = PhilipsHueMessageSender.BuildCommandBody(numeric, lightType, mapping.TransitionTime);
         using var content = new StringContent(command, Encoding.UTF8, "application/json");
+        var sendStartedAt = DateTimeOffset.UtcNow;
+        var requestDuration = Stopwatch.StartNew();
+        if (sourceReceivedAt is not null)
+            Log.Information("Sending Hue command for mapping {mapping} to target {targetId}; event-to-Hue-send delay {EventToSendMs:F1} ms", mapping.Name, mapping.TargetId, (sendStartedAt - sourceReceivedAt.Value).TotalMilliseconds);
         using var response = await client.PutAsync($"/clip/v2/resource/{mapping.HueResourceType}/{Uri.EscapeDataString(mapping.TargetId)}", content, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        requestDuration.Stop();
+        Log.Information("Hue command response for mapping {mapping} from target {targetId}: HTTP {StatusCode}; request duration {RequestDurationMs:F1} ms", mapping.Name, mapping.TargetId, (int)response.StatusCode, requestDuration.Elapsed.TotalMilliseconds);
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException($"Hue returned {(int)response.StatusCode} ({response.StatusCode}): {responseBody}");
 
@@ -174,9 +182,13 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
 
     public async Task SendTuyaAsync(TuyaDeviceSettings device, int dp, JsonElement value, CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Log.Information("Sending Tuya command to {device} ({ip}), DP {dp}: JSON {JsonType} {Value}", device.Name, device.IP, dp, value.ValueKind, value.GetRawText());
         using var connection = new TuyaLocalConnection(ToTuyaConfiguration(device));
         await connection.ConnectAsync(cancellationToken);
         await connection.SetDataPointAsync(dp, value, cancellationToken);
+        stopwatch.Stop();
+        Log.Information("Tuya command send completed for {device} DP {dp} in {DurationMs:F1} ms; acknowledgement is best-effort", device.Name, dp, stopwatch.Elapsed.TotalMilliseconds);
     }
 
     private HttpClient CreateHueClient(HueSettings bridge)

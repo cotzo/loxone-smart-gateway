@@ -40,8 +40,10 @@ public sealed class LoxoneIntegration
         _ = await DiscoverAsync(server, cancellationToken);
 
     public async Task RunSessionAsync(LoxoneSettings server, Action<string, string> onValue, Action<string> status,
-        IReadOnlySet<string> watchedStateUuids, CancellationToken cancellationToken)
+        IReadOnlySet<string> watchedStateUuids, CancellationToken cancellationToken, int sessionAttempt = 1)
     {
+        var sessionLog = Log.ForContext("LoxoneServer", server.Name).ForContext("SessionAttempt", sessionAttempt);
+        var sessionStartedAt = DateTimeOffset.UtcNow;
         using var client = new WebsocketWebserviceClient(server.Host, server.Port, 2, Guid.NewGuid().ToString(), "Loxone Smart Gateway", server.UseTls, server.CertificateAuthorityPem);
         // LxCommunicator 0.9.5 invokes this event without checking for subscribers.
         client.OnAuthenticated += (_, _) => { };
@@ -63,7 +65,7 @@ public sealed class LoxoneIntegration
                         .Concat(state.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance).Select(field => field.Name));
                     return $"{state.GetType().Name} members=[{string.Join(",", members)}] uuid={ReadProperty(state, "Uuid", "UUID", "Id")}";
                 });
-                Log.Information("Loxone event table {tableNumber} received with {stateCount} states; sample: {sampleStates}",
+                sessionLog.Information("Loxone event table {tableNumber} received with {stateCount} states; sample: {sampleStates}",
                     tableNumber, args.States.Count(), string.Join("; ", sampleStates));
             }
 
@@ -77,17 +79,18 @@ public sealed class LoxoneIntegration
                     .Select(property => $"{property.Name}={property.GetValue(state) ?? "null"}")
                     .Concat(state.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance)
                         .Select(field => $"{field.Name}={field.GetValue(state) ?? "null"}"));
-                Log.Information("Loxone mapped state payload {uuid}: {stateType} {members}", uuid, state.GetType().FullName, string.Join(", ", members));
+                sessionLog.Information("Loxone mapped state payload {uuid}: {stateType} {members}", uuid, state.GetType().FullName, string.Join(", ", members));
                 if (raw is null) continue;
                 onValue(uuid, raw.ToString() ?? string.Empty);
             }
         };
         client.OnConnectionError += exception =>
-            Log.Warning(exception, "Loxone websocket listener failed for {server}", server.Name);
+            sessionLog.Warning(exception, "Loxone websocket listener failed for {server}", server.Name);
         await AuthenticateAsync(client, tokenHandler);
         var response = await client.SendWebservice(new WebserviceRequest<string>("jdev/sps/enablebinstatusupdate", EncryptionType.None));
         if (response is null) throw new IOException("Miniserver closed the state subscription during setup.");
         status("Connected; receiving live state");
+        sessionLog.Information("Loxone state subscription active after {SetupDurationMs:F1} ms", (DateTimeOffset.UtcNow - sessionStartedAt).TotalMilliseconds);
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -103,11 +106,12 @@ public sealed class LoxoneIntegration
                 await client.KeepAliveAsync(TimeSpan.FromSeconds(10), cancellationToken);
 
                 var lastEventMs = Interlocked.Read(ref lastEventTableUnixMs);
-                Log.Information(
-                    "Loxone event-stream heartbeat for {server}: {eventTableCount} event tables received; last event table {lastEventTable}; keepalive acknowledged",
+                sessionLog.Information(
+                    "Loxone event-stream heartbeat for {server}: {eventTableCount} event tables received; last event table {lastEventTable}; keepalive acknowledged; session uptime {SessionUptimeSeconds:F1} s",
                     server.Name,
                     Volatile.Read(ref eventTableCount),
-                    lastEventMs == 0 ? "not received" : DateTimeOffset.FromUnixTimeMilliseconds(lastEventMs).ToString("O"));
+                    lastEventMs == 0 ? "not received" : DateTimeOffset.FromUnixTimeMilliseconds(lastEventMs).ToString("O"),
+                    (DateTimeOffset.UtcNow - sessionStartedAt).TotalSeconds);
             }
         }
         finally { status("Disconnected"); }

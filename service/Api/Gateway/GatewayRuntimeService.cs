@@ -19,9 +19,10 @@ public sealed class GatewayRuntimeService(
             var workers = settings.LoxoneServers.Select(server => RunServerLoopAsync(server, generation.Token)).ToArray();
             try
             {
-                await store.WaitForChangeAsync(version, TimeSpan.FromMinutes(5), stoppingToken);
+                // Settings changes advance the version and restart workers. A periodic timeout
+                // would needlessly tear down healthy sessions and replay Loxone's full snapshot.
+                await store.WaitForChangeAsync(version, Timeout.InfiniteTimeSpan, stoppingToken);
             }
-            catch (TimeoutException) { }
             finally
             {
                 generation.Cancel();
@@ -33,17 +34,24 @@ public sealed class GatewayRuntimeService(
 
     private async Task RunServerLoopAsync(LoxoneSettings server, CancellationToken cancellationToken)
     {
+        // Keep both deduplication and retry state across websocket reconnects. Loxone sends
+        // a full snapshot after reconnect; resetting these would replay every target command.
+        var pending = new Dictionary<string, (DeviceMapping Mapping, string Value, DateTimeOffset ReceivedAt, DateTimeOffset RetryAfter, int Attempts)>();
+        var lastValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var sessionAttempt = 0;
         while (!cancellationToken.IsCancellationRequested)
         {
-            var channel = Channel.CreateUnbounded<(string Uuid, string Value)>(new UnboundedChannelOptions
+            sessionAttempt++;
+            var channel = Channel.CreateUnbounded<(string Uuid, string Value, DateTimeOffset ReceivedAt)>(new UnboundedChannelOptions
             {
                 SingleReader = true,
                 SingleWriter = false
             });
             using var processorCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var processor = ProcessStatesAsync(server.Id, channel.Reader, processorCancellation.Token);
+            var processor = ProcessStatesAsync(server.Id, channel.Reader, pending, lastValues, processorCancellation.Token);
             try
             {
+                Log.Information("Starting Loxone session {SessionAttempt} for {server}", sessionAttempt, server.Name);
                 store.ReportLoxoneStatus(server.Id, "Connecting");
                 var watchedStateUuids = store.GetSnapshot().Settings.Mappings
                     .Where(mapping => mapping.LoxoneServerId.Equals(server.Id, StringComparison.OrdinalIgnoreCase))
@@ -52,16 +60,18 @@ public sealed class GatewayRuntimeService(
                 await loxone.RunSessionAsync(server,
                     (uuid, value) =>
                     {
-                        Log.Information("Received mapped Loxone state {uuid} from {server} with value {value}", uuid, server.Name, value);
-                        channel.Writer.TryWrite((uuid, value));
+                        var receivedAt = DateTimeOffset.UtcNow;
+                        Log.Information("Received mapped Loxone state {uuid} from {server} with value {value} in session {SessionAttempt}", uuid, server.Name, value, sessionAttempt);
+                        if (!channel.Writer.TryWrite((uuid, value, receivedAt)))
+                            Log.Warning("Could not queue Loxone state {uuid} from {server} in session {SessionAttempt}; the session processor is no longer accepting events", uuid, server.Name, sessionAttempt);
                     },
-                    status => store.ReportLoxoneStatus(server.Id, status), watchedStateUuids, cancellationToken);
+                    status => store.ReportLoxoneStatus(server.Id, status), watchedStateUuids, cancellationToken, sessionAttempt);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
             catch (Exception ex)
             {
                 store.ReportLoxoneStatus(server.Id, $"Reconnecting: {ex.Message}");
-                Log.Warning(ex, "Loxone connection {server} failed; retrying", server.Name);
+                Log.Warning(ex, "Loxone connection {server} session {SessionAttempt} failed; retrying", server.Name, sessionAttempt);
             }
             finally
             {
@@ -76,10 +86,10 @@ public sealed class GatewayRuntimeService(
         }
     }
 
-    private async Task ProcessStatesAsync(string serverId, ChannelReader<(string Uuid, string Value)> reader, CancellationToken cancellationToken)
+    private async Task ProcessStatesAsync(string serverId, ChannelReader<(string Uuid, string Value, DateTimeOffset ReceivedAt)> reader,
+        Dictionary<string, (DeviceMapping Mapping, string Value, DateTimeOffset ReceivedAt, DateTimeOffset RetryAfter, int Attempts)> pending,
+        Dictionary<string, string> lastValues, CancellationToken cancellationToken)
     {
-        var pending = new Dictionary<string, (DeviceMapping Mapping, string Value, DateTimeOffset RetryAfter, int Attempts)>();
-        var lastValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -94,16 +104,20 @@ public sealed class GatewayRuntimeService(
 
             while (reader.TryRead(out var state))
             {
-                if (lastValues.TryGetValue(state.Uuid, out var previous) && previous.Equals(state.Value))
+                var normalizedUuid = NormalizeUuid(state.Uuid);
+                if (lastValues.TryGetValue(normalizedUuid, out var previous) && previous.Equals(state.Value))
+                {
+                    Log.Debug("Ignoring repeated Loxone state {uuid} with unchanged value {value}; reconnect snapshot will not be replayed", state.Uuid, state.Value);
                     continue;
-                lastValues[state.Uuid] = state.Value;
+                }
+                lastValues[normalizedUuid] = state.Value;
                 var settings = store.GetSnapshot().Settings;
                 foreach (var mapping in settings.Mappings.Where(x =>
                              x.LoxoneServerId.Equals(serverId, StringComparison.OrdinalIgnoreCase) &&
                              NormalizeUuid(x.LoxoneStateUuid).Equals(NormalizeUuid(state.Uuid), StringComparison.OrdinalIgnoreCase)))
                 {
-                    Log.Information("Loxone state {uuid} matched mapping {mapping}; queuing target update", state.Uuid, mapping.Name);
-                    pending[mapping.Id] = (mapping, state.Value, DateTimeOffset.MinValue, 0);
+                    Log.Information("Loxone state {uuid} matched mapping {mapping}; queuing target update after {EventToQueueMs:F1} ms", state.Uuid, mapping.Name, (DateTimeOffset.UtcNow - state.ReceivedAt).TotalMilliseconds);
+                    pending[mapping.Id] = (mapping, state.Value, state.ReceivedAt, DateTimeOffset.MinValue, 0);
                 }
             }
 
@@ -113,16 +127,19 @@ public sealed class GatewayRuntimeService(
                 if (item.RetryAfter > now) continue;
                 try
                 {
-                    var applied = await ApplyMappingAsync(item.Mapping, item.Value, cancellationToken);
+                    var applied = await ApplyMappingAsync(item.Mapping, item.Value, item.ReceivedAt, cancellationToken);
                     pending.Remove(id);
                     if (applied)
                     {
                         store.ReportSync();
-                        Log.Information("Mapping {mapping} command accepted by {targetType} target {targetId}", item.Mapping.Name, item.Mapping.TargetType, item.Mapping.TargetId);
+                        if (item.Mapping.TargetType == "hue")
+                            Log.Information("Mapping {mapping} command accepted by Hue resource {targetId}; event-to-acceptance delay {EventToAcceptanceMs:F1} ms", item.Mapping.Name, item.Mapping.TargetId, (DateTimeOffset.UtcNow - item.ReceivedAt).TotalMilliseconds);
+                        else
+                            Log.Information("Mapping {mapping} Tuya command dispatched to device {device} DP {dp}; acknowledgement is best-effort; event-to-dispatch delay {EventToDispatchMs:F1} ms", item.Mapping.Name, store.GetSnapshot().Settings.TuyaDevices.FirstOrDefault(x => x.Id == item.Mapping.TargetConnectionId)?.Name ?? item.Mapping.TargetConnectionId, item.Mapping.TuyaDp, (DateTimeOffset.UtcNow - item.ReceivedAt).TotalMilliseconds);
                     }
                     else
                     {
-                        Log.Warning("Skipping invalid Loxone value {value} for mapping {mapping}; the Hue tunable-white value must be 0 or encode brightness 1–100 and temperature 2700–6500 K", item.Value, item.Mapping.Name);
+                        Log.Warning("Skipping Loxone value {value} for mapping {mapping} from source {SourceUuid} to Hue resource {TargetId}; converted value failed Hue tunable-white validation", item.Value, item.Mapping.Name, item.Mapping.LoxoneStateUuid, item.Mapping.TargetId);
                     }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -130,8 +147,8 @@ public sealed class GatewayRuntimeService(
                 {
                     var attempts = item.Attempts + 1;
                     var backoffSeconds = Math.Min(60, Math.Pow(2, Math.Min(attempts, 6)));
-                    pending[id] = (item.Mapping, item.Value, now.AddSeconds(backoffSeconds), attempts);
-                    Log.Warning(ex, "Unable to apply Loxone state to mapping {mapping}; will retry", item.Mapping.Name);
+                    pending[id] = (item.Mapping, item.Value, item.ReceivedAt, now.AddSeconds(backoffSeconds), attempts);
+                    Log.Warning(ex, "Unable to apply Loxone value {value} from source {SourceUuid} to mapping {mapping} on attempt {Attempt}; retrying in {RetryDelaySeconds:F0} s after {EventToFailureMs:F1} ms", item.Value, item.Mapping.LoxoneStateUuid, item.Mapping.Name, attempts, backoffSeconds, (DateTimeOffset.UtcNow - item.ReceivedAt).TotalMilliseconds);
                     if (item.Mapping.TargetType == "hue") store.ReportHueStatus(item.Mapping.TargetConnectionId, $"Command pending: {ex.Message}");
                     else store.ReportTuyaStatus(item.Mapping.TargetConnectionId, $"Command pending: {ex.Message}");
                 }
@@ -139,14 +156,15 @@ public sealed class GatewayRuntimeService(
         }
     }
 
-    private async Task<bool> ApplyMappingAsync(DeviceMapping mapping, string sourceValue, CancellationToken cancellationToken)
+    private async Task<bool> ApplyMappingAsync(DeviceMapping mapping, string sourceValue, DateTimeOffset receivedAt, CancellationToken cancellationToken)
     {
         var settings = store.GetSnapshot().Settings;
         var convertedValue = MappingValueConverter.Convert(mapping, sourceValue);
+        Log.Information("Mapping {mapping} converted source value {SourceValue} to JSON {JsonType} {ConvertedValue}", mapping.Name, sourceValue, convertedValue.ValueKind, convertedValue.GetRawText());
         if (mapping.TargetType == "hue")
         {
             var bridge = settings.HueBridges.First(x => x.Id == mapping.TargetConnectionId);
-            var applied = await devices.SendHueAsync(bridge, mapping, convertedValue, cancellationToken);
+            var applied = await devices.SendHueAsync(bridge, mapping, convertedValue, cancellationToken, receivedAt);
             if (!applied) return false;
             store.ReportHueStatus(bridge.Id, "Connected; command accepted");
         }
@@ -154,7 +172,7 @@ public sealed class GatewayRuntimeService(
         {
             var device = settings.TuyaDevices.First(x => x.Id == mapping.TargetConnectionId);
             await devices.SendTuyaAsync(device, mapping.TuyaDp!.Value, convertedValue, cancellationToken);
-            store.ReportTuyaStatus(device.Id, "Connected; command accepted");
+            store.ReportTuyaStatus(device.Id, "Connected; last command dispatched (acknowledgement best-effort)");
         }
 
         return true;
