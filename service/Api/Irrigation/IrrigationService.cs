@@ -205,14 +205,18 @@ public sealed class IrrigationService
         {
             balances.TryGetValue(group.Key, out var accumulated);
             var required = Math.Max(0, accumulated - effectiveForecastRain);
-            var shouldRun = required >= options.IrrigationTriggerMm;
+            var groupCompatible = group.Select(x => Math.Round(x.Exposure, 6)).Distinct().Count() == 1 &&
+                                  group.Select(x => x.Type.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1;
+            var shouldRun = groupCompatible && required >= options.IrrigationTriggerMm;
             var totalRate = group.Sum(x => Math.Max(0, x.ApplicationRateMmPerHour));
             var calculatedRuntime = shouldRun && totalRate > 0
                 ? (int)Math.Round(required / totalRate * 3600)
                 : 0;
             var runtime = Math.Clamp(calculatedRuntime, 0, Math.Max(0, options.MaximumZoneRuntimeSeconds));
             var capped = runtime < calculatedRuntime;
-            var summary = !shouldRun
+            var summary = !groupCompatible
+                ? "Balance group members have different type or exposure settings; no runtime is recommended until the shared root-zone configuration is made consistent."
+                : !shouldRun
                 ? $"Required water {required:F2} mm is below the {options.IrrigationTriggerMm:F2} mm trigger."
                 : totalRate <= 0
                     ? "No positive application rate is configured for this balance group."
@@ -341,9 +345,14 @@ public sealed class IrrigationService
     {
         foreach (var group in GetConfiguredGroups())
         {
+            if (group.Count() > 1)
+                Log.Warning("Irrigation balance group {group} contains {ZoneCount} circuits: application rates are summed and identical runtime is applied to all members. This is valid only for parallel circuits replenishing the same root area; sequential valves or distinct areas need separate balance groups", group.Key, group.Count());
             var exposures = group.Select(x => Math.Round(x.Exposure, 6)).Distinct().ToArray();
             if (exposures.Length > 1)
                 Log.Warning("Irrigation balance group {group} contains different exposure values; using the first zone's exposure", group.Key);
+            var types = group.Select(x => x.Type.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (types.Length > 1)
+                Log.Warning("Irrigation balance group {group} contains different zone types ({Types}); confirm they share one root-zone water balance", group.Key, string.Join(", ", types));
         }
     }
 

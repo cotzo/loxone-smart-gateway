@@ -128,6 +128,39 @@ public sealed class IrrigationServiceTests
     }
 
     [Fact]
+    public async Task SharedBalanceGroup_WithDifferentExposureDoesNotRecommendUnsafeRuntime()
+    {
+        var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{\"LawnEast\":8},\"IrrigationRuns\":[]}");
+        try
+        {
+            var service = CreateService(stateFile, new Dictionary<string, string?>
+            {
+                ["Api:IrrigationConfiguration:IrrigationTriggerMm"] = "5",
+                ["Api:IrrigationConfiguration:ForecastHours"] = "1",
+                ["Api:IrrigationConfiguration:Zones:0:Id"] = "V1",
+                ["Api:IrrigationConfiguration:Zones:0:BalanceGroup"] = "LawnEast",
+                ["Api:IrrigationConfiguration:Zones:0:Exposure"] = "0.5",
+                ["Api:IrrigationConfiguration:Zones:0:ApplicationRateMmPerHour"] = "12",
+                ["Api:IrrigationConfiguration:Zones:1:Id"] = "V2",
+                ["Api:IrrigationConfiguration:Zones:1:BalanceGroup"] = "LawnEast",
+                ["Api:IrrigationConfiguration:Zones:1:Exposure"] = "1"
+            });
+
+            var result = await service.CalculateAsync(CancellationToken.None);
+            Assert.All(result.Zones, zone =>
+            {
+                Assert.Equal(0, zone.RuntimeSeconds);
+                Assert.False(zone.ShouldIrrigate);
+                Assert.Contains("different type or exposure", zone.DecisionSummary);
+            });
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(stateFile)!, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Runtime_IsCapped()
     {
         var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{\"V6\":15},\"IrrigationRuns\":[]}");

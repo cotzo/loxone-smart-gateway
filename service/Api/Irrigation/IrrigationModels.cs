@@ -81,7 +81,10 @@ public sealed class IrrigationZoneConfiguration
     public string Type { get; set; } = "Lawn";
     public string BalanceGroup { get; set; } = string.Empty;
     public double Exposure { get; set; } = 1.0;
-    // Physical water delivered by this single valve/circuit.
+    // Millimetres of water delivered per hour over the shared root-zone area. For grouped
+    // zones this is summed and all member circuits receive the same runtime, so grouping
+    // is valid only for parallel circuits that replenish the same physical area. Keep
+    // sequential valves or distinct root areas in separate balance groups.
     public double ApplicationRateMmPerHour { get; set; } = 10.0;
 }
 
