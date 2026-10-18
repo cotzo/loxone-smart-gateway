@@ -210,12 +210,14 @@ public sealed class IrrigationService
             var required = Math.Max(0, accumulated - effectiveForecastRain);
             var shouldRun = required >= options.IrrigationTriggerMm;
             var totalRate = group.Sum(x => Math.Max(0, x.ApplicationRateMmPerHour));
-            var calculatedRuntime = shouldRun && totalRate > 0
+            var calculatedRuntime = shouldRun && localDataComplete && totalRate > 0
                 ? (int)Math.Round(required / totalRate * 3600)
                 : 0;
             var runtime = Math.Clamp(calculatedRuntime, 0, Math.Max(0, options.MaximumZoneRuntimeSeconds));
             var capped = runtime < calculatedRuntime;
-            var summary = !shouldRun
+            var summary = !localDataComplete
+                ? "Weather coverage is incomplete; recommended runtime is suppressed for safety."
+                : !shouldRun
                 ? $"Required water {required:F2} mm is below the {options.IrrigationTriggerMm:F2} mm trigger."
                 : totalRate <= 0
                     ? "No positive application rate is configured for this balance group."
@@ -278,7 +280,9 @@ public sealed class IrrigationService
             var dayObs = ordered.Where(x => x.Timestamp >= startUtc && x.Timestamp < endUtc).ToList();
             var coverageGap = TimeSpan.FromMinutes(Math.Max(1, _options.CompletedDayEdgeGapMinutes));
 
-            if (HasCompleteDayCoverage(dayObs, startUtc, endUtc, coverageGap))
+            if (HasCompleteDayCoverage(dayObs, startUtc, endUtc, coverageGap,
+                    TimeSpan.FromMinutes(Math.Max(1, _options.MaximumObservationGapMinutes)),
+                    _options.MinimumWeatherCoverageFraction))
             {
                 var et0 = CalculateEt0(dayObs, _options);
                 var effectiveRain = RainForPeriod(ordered, startUtc, endUtc) * _options.EffectiveRainFactor;
@@ -304,7 +308,9 @@ public sealed class IrrigationService
                 break;
             }
 
-            if (HasCompleteDayCoverage(dayObs, startUtc, endUtc, coverageGap))
+            if (HasCompleteDayCoverage(dayObs, startUtc, endUtc, coverageGap,
+                    TimeSpan.FromMinutes(Math.Max(1, _options.MaximumObservationGapMinutes)),
+                    _options.MinimumWeatherCoverageFraction))
                 changed |= _state.BalanceDayStatus.RemoveAll(x => x.LocalDate == next) > 0;
 
             _state.LastBalancedLocalDate = next;
@@ -389,12 +395,26 @@ public sealed class IrrigationService
         IReadOnlyList<WeatherObservation> observations,
         DateTimeOffset start,
         DateTimeOffset end,
-        TimeSpan edgeGap)
+        TimeSpan edgeGap,
+        TimeSpan? maximumGap = null,
+        double minimumCoverageFraction = 0.9)
     {
-        if (observations.Count < 2) return false;
-        var first = observations[0].Timestamp ?? DateTimeOffset.MaxValue;
-        var last = observations[^1].Timestamp ?? DateTimeOffset.MinValue;
-        return first <= start + edgeGap && last >= end - edgeGap;
+        var times = observations.Where(x => x.Timestamp is not null).Select(x => x.Timestamp!.Value).Order().ToArray();
+        if (times.Length < 2) return false;
+        if (times[0] > start + edgeGap || times[^1] < end - edgeGap) return false;
+        var maxGap = maximumGap ?? TimeSpan.FromMinutes(15);
+        var covered = 0d;
+        for (var i = 1; i < times.Length; i++)
+        {
+            var gap = times[i] - times[i - 1];
+            if (gap > maxGap) continue;
+            var coveredStart = times[i - 1] < start ? start : times[i - 1];
+            var coveredEnd = times[i] > end ? end : times[i];
+            if (coveredEnd > coveredStart) covered += (coveredEnd - coveredStart).TotalSeconds;
+        }
+        var duration = (end - start).TotalSeconds;
+        var coverage = duration > 0 ? Math.Clamp(covered / duration, 0, 1) : 0;
+        return coverage >= Math.Clamp(minimumCoverageFraction, 0, 1);
     }
 
     internal static double RainForPeriod(
@@ -427,8 +447,9 @@ public sealed class IrrigationService
     {
         if (observations.Count < 2) return false;
         var edgeGap = TimeSpan.FromMinutes(Math.Max(1, options.MaximumObservationEdgeGapMinutes));
-        return observations[0].Timestamp <= now.AddHours(-24) + edgeGap &&
-               observations[^1].Timestamp >= now - edgeGap;
+        return HasCompleteDayCoverage(observations, now.AddHours(-24), now, edgeGap,
+            TimeSpan.FromMinutes(Math.Max(1, options.MaximumObservationGapMinutes)),
+            options.MinimumWeatherCoverageFraction);
     }
 
     internal static double RainDelta(IReadOnlyList<WeatherObservation> observations)
