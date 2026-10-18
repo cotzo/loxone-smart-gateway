@@ -2,13 +2,14 @@ using System.Globalization;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Net.Security;
 using loxone.smart.gateway.Api.PhilipsHue;
 using loxone.smart.gateway.Api.Tuya;
 using Serilog;
 
 namespace loxone.smart.gateway.Api.Gateway;
 
-public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetrics? metrics = null)
+public sealed class DeviceIntegrations(GatewayMetrics? metrics = null, Func<string, HttpMessageHandler>? hueHandlerFactory = null)
 {
     public async Task<IReadOnlyList<HueResource>> GetHueResourcesAsync(HueSettings bridge, CancellationToken cancellationToken)
     {
@@ -219,12 +220,21 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
     private HttpClient CreateHueClient(HueSettings bridge)
     {
         var host = bridge.Host.Contains("://", StringComparison.Ordinal) ? bridge.Host : $"https://{bridge.Host}";
-        var client = clients.CreateClient("HueDynamic");
-        client.BaseAddress = new Uri(host.TrimEnd('/') + "/");
+        var baseAddress = new Uri(host.TrimEnd('/') + "/");
+        var handler = hueHandlerFactory?.Invoke(baseAddress.DnsSafeHost) ?? CreateHueHandler(baseAddress.DnsSafeHost);
+        var client = new HttpClient(handler, disposeHandler: true);
+        client.BaseAddress = baseAddress;
         client.Timeout = TimeSpan.FromSeconds(10);
         client.DefaultRequestHeaders.TryAddWithoutValidation("hue-application-key", bridge.ApplicationKey);
         return client;
     }
+
+    private static HttpMessageHandler CreateHueHandler(string configuredHost) => new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = (request, _, _, errors) =>
+            string.Equals(request.RequestUri?.DnsSafeHost, configuredHost, StringComparison.OrdinalIgnoreCase)
+            && errors is SslPolicyErrors.None or SslPolicyErrors.RemoteCertificateChainErrors
+    };
 
     private static TuyaDeviceConfiguration ToTuyaConfiguration(TuyaDeviceSettings device) => new()
     {
