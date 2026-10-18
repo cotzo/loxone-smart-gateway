@@ -80,11 +80,6 @@ builder.Services.AddHostedService<IrrigationDurationSyncService>();
 builder.Services.AddHostedService<IrrigationSignalSyncService>();
 builder.Services.AddHostedService<IrrigationWeatherStateService>(provider => provider.GetRequiredService<IrrigationWeatherStateService>());
 
-builder.Services.AddHttpClient("HueDynamic")
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-    {
-        SslOptions = { RemoteCertificateValidationCallback = (_, _, _, _) => true }
-    });
 builder.Services.AddHttpClient("LoxoneDiscovery");
 builder.Services.AddHttpClient<OpenMeteoForecastClient>(client =>
 {
