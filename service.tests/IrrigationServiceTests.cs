@@ -57,6 +57,40 @@ public sealed class IrrigationServiceTests
     }
 
     [Fact]
+    public async Task IncompleteBalanceDay_RemainsRepairableUntilCoverageArrives()
+    {
+        var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{},\"IrrigationRuns\":[]}");
+        try
+        {
+            var service = CreateService(stateFile, new Dictionary<string, string?>
+            {
+                ["Api:IrrigationConfiguration:TimeZoneId"] = "Europe/Bucharest",
+                ["Api:IrrigationConfiguration:CompletedDayEdgeGapMinutes"] = "30"
+            });
+            var timezone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Bucharest");
+            var date = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timezone).DateTime).AddDays(-2);
+            var start = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(date.ToDateTime(TimeOnly.MinValue), timezone), TimeSpan.Zero);
+            var end = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(date.AddDays(1).ToDateTime(TimeOnly.MinValue), timezone), TimeSpan.Zero);
+
+            await service.AddObservationAsync(Obs(0, start.AddHours(12)), CancellationToken.None);
+            await service.AddObservationAsync(Obs(0, end.AddMinutes(-5)), CancellationToken.None);
+            await service.CalculateAsync(CancellationToken.None);
+            var pending = await service.GetStoredDataAsync(CancellationToken.None);
+            Assert.Null(pending.LastBalancedLocalDate);
+            Assert.Contains(pending.BalanceDayStatus, x => x.LocalDate == date && x.Status == "Pending");
+
+            await service.AddObservationAsync(Obs(0, start.AddMinutes(5)), CancellationToken.None);
+            var repaired = await service.GetStoredDataAsync(CancellationToken.None);
+            Assert.Equal(date, repaired.LastBalancedLocalDate);
+            Assert.DoesNotContain(repaired.BalanceDayStatus, x => x.LocalDate == date);
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(stateFile)!, recursive: true);
+        }
+    }
+
+    [Fact]
     public void BalanceGroup_FallsBackToZoneId()
     {
         Assert.Equal("V1", IrrigationService.ResolveBalanceGroup(new IrrigationZoneConfiguration { Id = "V1" }));
