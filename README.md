@@ -56,6 +56,7 @@ Provider metrics use only bounded labels (`provider`, Hue `bridge` display name,
 - `gateway_provider_commands` — counter by provider/resource type and success, failure, or invalid input outcome.
 - `gateway_provider_commands_coalesced`, `gateway_provider_command_retries`, `gateway_provider_command_failures` — replaced pending values, scheduled retries, and commands dropped after exhausting retries.
 - `gateway_provider_queue_pending` — current unique pending commands.
+- `gateway_provider_queue_oldest_pending_age` — oldest pending command age in seconds, by provider lane (Hue bridge/resource type or Tuya device lane); reports zero when a lane is idle.
 - `irrigation_weather_observations_committed`, `irrigation_weather_observation_interval` — committed observation count and spacing.
 - `irrigation_weather_observations_stored`, `irrigation_weather_latest_age`, `irrigation_weather_history_span` — retained weather history size, freshness, and time coverage.
 - `irrigation_weather_observed_temperature`, `irrigation_weather_observed_humidity`, `irrigation_weather_observed_pressure`, `irrigation_weather_observed_wind_speed`, `irrigation_weather_observed_light`, `irrigation_weather_observed_rainfall_counter` — latest persisted mapped sensor points.

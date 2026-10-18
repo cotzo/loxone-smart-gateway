@@ -53,7 +53,7 @@
       "title": "Provider event → dispatch latency (p50 / p95)",
       "description": "Loxone state receipt to the start of a Hue/Tuya send. Includes queue wait and pacing, but excludes provider network response time.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 0 },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
@@ -67,13 +67,24 @@
       "title": "Queue wait vs provider request time (p95)",
       "description": "Separates gateway backlog/pacing from network/device time. Hue has distinct light and grouped_light series; Tuya is device-level and includes connect + send.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 0 },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
         { "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, provider, resource_type, bridge) (rate({__name__=~\"gateway_provider_queue_wait(_milliseconds)?_bucket\", provider=~\"$provider\", bridge=~\"$bridge\"}[5m])))", "legendFormat": "queue p95 {{provider}} / {{bridge}} / {{resource_type}}", "refId": "A" },
         { "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, provider, resource_type, bridge) (rate({__name__=~\"gateway_provider_request_duration(_milliseconds)?_bucket\", provider=~\"$provider\", bridge=~\"$bridge\"}[5m])))", "legendFormat": "request p95 {{provider}} / {{bridge}} / {{resource_type}}", "refId": "B" }
       ]
+    },
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "Oldest pending command age",
+      "description": "Current age of the oldest waiting command in each lane. Hue lanes are split by bridge and resource type; Tuya uses its serialized device lane. Compare with queue wait and provider request duration to distinguish backpressure from slow provider calls.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "editorMode": "code", "expr": "gateway_provider_queue_oldest_pending_age{provider=~\"$provider\", bridge=~\"$bridge\"}", "legendFormat": "{{provider}} / {{bridge}} / {{resource_type}}", "refId": "A" }]
     },
     {
       "id": 4,

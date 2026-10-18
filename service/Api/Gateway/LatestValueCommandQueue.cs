@@ -53,6 +53,7 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
         _bridge = bridge;
         QueueName = queueName;
         _stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _metrics.RecordOldestPending(QueueName, _provider, _resourceType, _bridge, null);
         _worker = RunAsync();
     }
 
@@ -69,6 +70,7 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
             _latestVersions[targetKey] = version;
             _pending[targetKey] = new Work(targetKey, command, version, 0, DateTimeOffset.UtcNow);
             _metrics.RecordEnqueued(_provider, _resourceType, replaced, _bridge);
+            UpdateOldestPendingMetricLocked();
             ScheduleLocked(targetKey);
         }
     }
@@ -93,6 +95,7 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
                 {
                     _scheduled.Remove(targetKey);
                     _pending.Remove(targetKey, out work);
+                    UpdateOldestPendingMetricLocked();
                 }
                 if (work is null) continue;
                 _metrics.RecordDequeued(_provider, _resourceType, _bridge);
@@ -173,6 +176,7 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
 
                 _pending[retry.TargetKey] = retry with { EnqueuedAt = DateTimeOffset.UtcNow };
                 _metrics.RecordEnqueued(_provider, _resourceType, replaced: false, _bridge);
+                UpdateOldestPendingMetricLocked();
                 ScheduleLocked(retry.TargetKey);
             }
         }
@@ -192,11 +196,18 @@ internal sealed class LatestValueCommandQueue<TCommand> : IAsyncDisposable
             retries = [.. _retryTasks];
             var remaining = _pending.Count;
             _pending.Clear();
+            UpdateOldestPendingMetricLocked();
             for (var index = 0; index < remaining; index++)
                 _metrics.RecordDequeued(_provider, _resourceType, _bridge);
         }
         try { await Task.WhenAll(retries); }
         catch (OperationCanceledException) { }
         _stop.Dispose();
+    }
+
+    private void UpdateOldestPendingMetricLocked()
+    {
+        DateTimeOffset? oldest = _pending.Count == 0 ? null : _pending.Values.Min(work => work.EnqueuedAt);
+        _metrics.RecordOldestPending(QueueName, _provider, _resourceType, _bridge, oldest);
     }
 }

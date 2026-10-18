@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Diagnostics;
+using System.Collections.Concurrent;
 
 namespace loxone.smart.gateway.Api.Gateway;
 
@@ -16,6 +17,9 @@ public sealed class GatewayMetrics : IDisposable
     private readonly Histogram<double> _queueWait = null!;
     private readonly Histogram<double> _networkDuration = null!;
     private readonly Histogram<double> _eventToDispatch = null!;
+    private readonly ConcurrentDictionary<string, QueueAgeSnapshot> _queueOldestPending = new(StringComparer.Ordinal);
+
+    private sealed record QueueAgeSnapshot(string Provider, string ResourceType, string? Bridge, DateTimeOffset? EnqueuedAt);
 
     public GatewayMetrics()
     {
@@ -27,6 +31,8 @@ public sealed class GatewayMetrics : IDisposable
         _queueWait = _meter.CreateHistogram<double>("gateway.provider.queue.wait", unit: "ms", description: "Time from enqueue to provider send start, including pacing.");
         _networkDuration = _meter.CreateHistogram<double>("gateway.provider.request.duration", unit: "ms", description: "Provider request duration.");
         _eventToDispatch = _meter.CreateHistogram<double>("gateway.provider.event.to.dispatch", unit: "ms", description: "Time from Loxone state receipt to provider send start.");
+        _meter.CreateObservableGauge("gateway.provider.queue.oldest_pending.age", ObserveOldestPendingAges,
+            unit: "s", description: "Age of the oldest command currently waiting in each provider queue lane.");
     }
 
     public void RecordEnqueued(string provider, string resourceType, bool replaced, string? bridge = null)
@@ -53,6 +59,22 @@ public sealed class GatewayMetrics : IDisposable
 
     public void RecordEventToDispatch(string provider, string resourceType, double milliseconds, string? bridge = null) =>
         _eventToDispatch.Record(Math.Max(0, milliseconds), Tags(provider, resourceType, bridge: bridge));
+
+    public void RecordOldestPending(string queue, string provider, string resourceType, string? bridge, DateTimeOffset? enqueuedAt) =>
+        _queueOldestPending[queue] = new QueueAgeSnapshot(provider, resourceType, bridge, enqueuedAt);
+
+    private IEnumerable<Measurement<double>> ObserveOldestPendingAges()
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var snapshot in _queueOldestPending.Values)
+        {
+            var tags = Tags(snapshot.Provider, snapshot.ResourceType, bridge: snapshot.Bridge);
+            var ageSeconds = snapshot.EnqueuedAt is { } enqueuedAt
+                ? Math.Max(0, (now - enqueuedAt).TotalSeconds)
+                : 0;
+            yield return new Measurement<double>(ageSeconds, tags);
+        }
+    }
 
     private static TagList Tags(string provider, string resourceType, (string Key, string Value)? extra = null, string? bridge = null)
     {
