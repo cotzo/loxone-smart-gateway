@@ -179,6 +179,13 @@ public sealed class GatewayController(
             lawnDry));
     }
 
+    [HttpPost("irrigation/state/reset")]
+    public async Task<IActionResult> ResetIrrigationState(CancellationToken cancellationToken)
+    {
+        await irrigation.ResetStateAsync(cancellationToken);
+        return NoContent();
+    }
+
     [HttpPut("irrigation")]
     public async Task<IActionResult> SaveIrrigation([FromBody] IrrigationConfiguration configuration, CancellationToken cancellationToken)
     {
