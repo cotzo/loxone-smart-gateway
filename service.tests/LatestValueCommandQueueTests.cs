@@ -34,6 +34,36 @@ public sealed class LatestValueCommandQueueTests
     }
 
     [Fact]
+    public async Task DispatchesNewestValueAfterInflightFailureWithoutRetryingStaleValue()
+    {
+        var firstStarted = NewSignal();
+        var releaseFirst = NewSignal();
+        var latestSent = NewSignal();
+        var sent = new List<int>();
+        await using var queue = new LatestValueCommandQueue<int>(async (value, _) =>
+        {
+            lock (sent) sent.Add(value);
+            if (value == 1)
+            {
+                firstStarted.TrySetResult();
+                await releaseFirst.Task;
+                throw new InvalidOperationException("delayed failure");
+            }
+            latestSent.TrySetResult();
+        }, TimeSpan.Zero, CancellationToken.None, "test", (_, _) => Task.CompletedTask);
+
+        queue.Enqueue("lamp", 1);
+        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        queue.Enqueue("lamp", 2);
+        queue.Enqueue("lamp", 3);
+        releaseFirst.TrySetResult();
+        await latestSent.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(50);
+
+        lock (sent) Assert.Equal([1, 3], sent);
+    }
+
+    [Fact]
     public async Task IndependentQueuesCanSendConcurrently()
     {
         var firstStarted = NewSignal();
