@@ -7,6 +7,7 @@ namespace loxone.smart.gateway.Api.Irrigation;
 public sealed class IrrigationSignalSyncService(
     GatewayStateStore store,
     IrrigationService irrigation,
+    IrrigationWeatherStateService weatherState,
     LawnDryService lawnDryService,
     LoxoneIntegration loxone) : BackgroundService
 {
@@ -31,7 +32,7 @@ public sealed class IrrigationSignalSyncService(
 
         var irrigationDecision = configuration.IrrigationRequiredTarget is null
             ? null
-            : await irrigation.CalculateAsync(cancellationToken);
+            : await irrigation.CalculateAsync(cancellationToken, weatherState.GetSourceStatus().Healthy);
         var lawnDryDecision = configuration.LawnDryTarget is null
             ? null
             : await lawnDryService.GetStatusAsync(cancellationToken);

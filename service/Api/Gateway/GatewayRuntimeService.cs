@@ -76,12 +76,17 @@ public sealed class GatewayRuntimeService(
                         if (!channel.Writer.TryWrite((uuid, value, receivedAt)))
                             Log.Warning("Could not queue Loxone state {uuid} from {server} in session {SessionAttempt}; the session processor is no longer accepting events", uuid, server.Name, sessionAttempt);
                     },
-                    status => store.ReportLoxoneStatus(server.Id, status), watchedStateUuids, cancellationToken, sessionAttempt);
+                    status =>
+                    {
+                        store.ReportLoxoneStatus(server.Id, status);
+                        irrigationWeather.ReportSourceStatus(server.Id, status);
+                    }, watchedStateUuids, cancellationToken, sessionAttempt);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
             catch (Exception ex)
             {
                 store.ReportLoxoneStatus(server.Id, $"Reconnecting: {ex.Message}");
+                irrigationWeather.ReportSourceStatus(server.Id, $"Reconnecting: {ex.Message}");
                 Log.Warning(ex, "Loxone connection {server} session {SessionAttempt} failed; retrying", server.Name, sessionAttempt);
             }
             finally
@@ -105,18 +110,17 @@ public sealed class GatewayRuntimeService(
             while (reader.TryRead(out var state))
             {
                 var normalizedUuid = NormalizeUuid(state.Uuid);
-                if (lastValues.TryGetValue(normalizedUuid, out var previous) && previous.Equals(state.Value))
-                {
+                var isRepeated = lastValues.TryGetValue(normalizedUuid, out var previous) && previous.Equals(state.Value);
+                if (isRepeated)
                     Log.Debug("Ignoring repeated Loxone state {uuid} with unchanged value {value}; reconnect snapshot will not be replayed", state.Uuid, state.Value);
-                    continue;
-                }
-                lastValues[normalizedUuid] = state.Value;
                 try { await irrigationLoxone.ObserveStateAsync(serverId, state.Uuid, state.Value, cancellationToken); }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception ex) { Log.Warning(ex, "Unable to process irrigation currentZone state {Uuid} from Miniserver {ServerId}", state.Uuid, serverId); }
                 try { await irrigationWeather.ObserveStateAsync(serverId, state.Uuid, state.Value, cancellationToken); }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception ex) { Log.Warning(ex, "Unable to process mapped irrigation weather state {Uuid} from Miniserver {ServerId}", state.Uuid, serverId); }
+                lastValues[normalizedUuid] = state.Value;
+                if (isRepeated) continue;
                 var settings = store.GetSnapshot().Settings;
                 foreach (var mapping in settings.Mappings.Where(x =>
                              x.LoxoneServerId.Equals(serverId, StringComparison.OrdinalIgnoreCase) &&

@@ -22,7 +22,10 @@ public sealed class IrrigationConfiguration
     public int MaximumZoneRuntimeSeconds { get; set; } = 1800;
     public int ForecastHours { get; set; } = 24;
     public int MaximumTimestampSkewMinutes { get; set; } = 5;
+    public int WeatherSourceHealthTimeoutMinutes { get; set; } = 2;
     public int MaximumObservationEdgeGapMinutes { get; set; } = 15;
+    public int MaximumObservationGapMinutes { get; set; } = 15;
+    public double MinimumWeatherCoverageFraction { get; set; } = 0.9;
     public int CompletedDayEdgeGapMinutes { get; set; } = 30;
     public string TimeZoneId { get; set; } = "Europe/Bucharest";
     public string StateFile { get; set; } = "data/irrigation-state.json";
@@ -143,14 +146,23 @@ public sealed record IrrigationStoredData(
     IReadOnlyDictionary<string, double> BalanceDeficitMm,
     DateOnly? LastBalancedLocalDate,
     IReadOnlyList<IrrigationRun> IrrigationRuns,
-    int TotalObservationCount);
+    int TotalObservationCount,
+    IReadOnlyList<IrrigationBalanceDayStatus> BalanceDayStatus);
+
+public sealed record IrrigationBalanceDayStatus(DateOnly LocalDate, string Status, string Reason, DateTimeOffset UpdatedAt);
 
 public sealed record IrrigationDashboardSnapshot(
     IrrigationConfiguration Configuration,
     IrrigationStoredData Stored,
     IReadOnlyList<string> ActiveZoneIds,
     IrrigationResult Decision,
-    LawnDryStatus LawnDry);
+    LawnDryStatus LawnDry,
+    IrrigationWeatherSourceStatus WeatherSource);
+
+public sealed record IrrigationWeatherSourceStatus(
+    bool Healthy,
+    string Summary,
+    IReadOnlyDictionary<string, DateTimeOffset?> FieldLastReceivedAt);
 
 internal sealed class IrrigationState
 {
@@ -158,4 +170,5 @@ internal sealed class IrrigationState
     public Dictionary<string, double> BalanceDeficitMm { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public DateOnly? LastBalancedLocalDate { get; set; }
     public List<IrrigationRun> IrrigationRuns { get; set; } = [];
+    public List<IrrigationBalanceDayStatus> BalanceDayStatus { get; set; } = [];
 }
