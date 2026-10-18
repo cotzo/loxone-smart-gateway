@@ -79,6 +79,9 @@ public sealed class WeatherIngestionService
         }
     }
 
+    public Task CommitMappedAsync(WeatherObservation observation, CancellationToken cancellationToken) =>
+        _irrigationService.AddObservationAsync(observation with { Timestamp = DateTimeOffset.UtcNow }, cancellationToken);
+
     public async Task<IrrigationWeatherInputState> GetPendingSnapshotAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);

@@ -79,7 +79,8 @@ public sealed class ExactValueRule
     public string OutputValue { get; set; } = string.Empty;
 }
 
-public sealed record LoxoneStateOption(string Uuid, string Control, string Type, string State, string ServerId, string ControlUuid = "");
+public sealed record LoxoneStateOption(string Uuid, string Control, string Type, string State, string ServerId,
+    string ControlUuid = "", string Room = "", string Category = "");
 public sealed record LoxoneStateCatalog(DateTimeOffset DiscoveredAt, IReadOnlyList<LoxoneStateOption> States);
 public sealed record IntegrationStatus(IReadOnlyList<ConnectionStatus> Loxone, IReadOnlyList<ConnectionStatus> Hue, IReadOnlyList<ConnectionStatus> Tuya, int MappingCount, DateTimeOffset? LastSync);
 public sealed record ConnectionStatus(string Id, string Name, string Status);

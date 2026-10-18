@@ -40,6 +40,14 @@ public sealed class IrrigationConfiguration
 
     public List<IrrigationZoneConfiguration> Zones { get; set; } = [];
     public IrrigationLoxoneBlockConfiguration? LoxoneBlock { get; set; }
+    public List<IrrigationWeatherStateMapping> WeatherStateMappings { get; set; } = [];
+}
+
+public sealed class IrrigationWeatherStateMapping
+{
+    public string Field { get; set; } = string.Empty;
+    public string ServerId { get; set; } = string.Empty;
+    public string StateUuid { get; set; } = string.Empty;
 }
 
 public sealed class IrrigationLoxoneBlockConfiguration

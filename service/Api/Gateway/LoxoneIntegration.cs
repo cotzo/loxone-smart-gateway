@@ -63,8 +63,10 @@ public sealed class LoxoneIntegration
             throw new InvalidOperationException("The Miniserver returned an empty structure file.");
         using var json = JsonDocument.Parse(response.Value);
         var options = new List<LoxoneStateOption>();
+        var rooms = ReadNamedSection(json.RootElement, "rooms");
+        var categories = ReadNamedSection(json.RootElement, "cats");
         if (json.RootElement.TryGetProperty("controls", out var controls))
-            ReadControls(controls, string.Empty, options, server.Id);
+            ReadControls(controls, string.Empty, options, server.Id, rooms, categories);
         return options.OrderBy(x => x.Control).ThenBy(x => x.State).ToList();
     }
 
@@ -310,7 +312,24 @@ public sealed class LoxoneIntegration
         publicKeyProperty.SetValue(client.Session, xmlKey);
     }
 
-    private static void ReadControls(JsonElement controls, string parent, List<LoxoneStateOption> result, string serverId)
+    private static Dictionary<string, string> ReadNamedSection(JsonElement root, string section)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!root.TryGetProperty(section, out var entries) || entries.ValueKind != JsonValueKind.Object) return values;
+        foreach (var entry in entries.EnumerateObject())
+        {
+            if (entry.Value.ValueKind != JsonValueKind.Object) continue;
+            var name = entry.Value.TryGetProperty("name", out var nameNode) ? nameNode.GetString() : null;
+            if (!string.IsNullOrWhiteSpace(name)) values[entry.Name] = name;
+            if (entry.Value.TryGetProperty("uuid", out var uuidNode) && !string.IsNullOrWhiteSpace(uuidNode.GetString()) && !string.IsNullOrWhiteSpace(name))
+                values[uuidNode.GetString()!] = name;
+        }
+        return values;
+    }
+
+    private static void ReadControls(JsonElement controls, string parent, List<LoxoneStateOption> result, string serverId,
+        IReadOnlyDictionary<string, string> rooms, IReadOnlyDictionary<string, string> categories,
+        string inheritedRoomUuid = "", string inheritedCategoryUuid = "")
     {
         if (controls.ValueKind != JsonValueKind.Object) return;
         foreach (var control in controls.EnumerateObject())
@@ -321,15 +340,20 @@ public sealed class LoxoneIntegration
             var path = string.IsNullOrEmpty(parent) ? name : $"{parent} / {name}";
             var type = item.TryGetProperty("type", out var typeNode) ? typeNode.GetString() ?? "" : "";
             var controlUuid = item.TryGetProperty("uuidAction", out var actionNode) ? actionNode.GetString() ?? "" : "";
+            var roomUuid = item.TryGetProperty("room", out var roomNode) ? roomNode.GetString() ?? inheritedRoomUuid : inheritedRoomUuid;
+            var categoryUuid = item.TryGetProperty("cat", out var categoryNode) ? categoryNode.GetString() ?? inheritedCategoryUuid : inheritedCategoryUuid;
+            var roomName = string.IsNullOrWhiteSpace(roomUuid) ? "Unassigned" : rooms.GetValueOrDefault(roomUuid, $"Unknown room ({roomUuid})");
+            var categoryName = string.IsNullOrWhiteSpace(categoryUuid) ? "Uncategorized" : categories.GetValueOrDefault(categoryUuid, $"Unknown category ({categoryUuid})");
             if (item.TryGetProperty("states", out var states) && states.ValueKind == JsonValueKind.Object)
             {
                 foreach (var state in states.EnumerateObject())
                 {
                     var uuid = state.Value.GetString();
-                    if (!string.IsNullOrWhiteSpace(uuid)) result.Add(new LoxoneStateOption(uuid, path, type, state.Name, serverId, controlUuid));
+                    if (!string.IsNullOrWhiteSpace(uuid)) result.Add(new LoxoneStateOption(uuid, path, type, state.Name, serverId, controlUuid, roomName, categoryName));
                 }
             }
-            if (item.TryGetProperty("subControls", out var subControls)) ReadControls(subControls, path, result, serverId);
+            if (item.TryGetProperty("subControls", out var subControls))
+                ReadControls(subControls, path, result, serverId, rooms, categories, roomUuid, categoryUuid);
         }
     }
 
