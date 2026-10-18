@@ -67,7 +67,7 @@ Provider metrics use only bounded labels (`provider`, Hue `bridge` display name,
 
 Prometheus applies its normal `_bucket`, `_sum`, and `_count` suffixes to histograms. An age gauge is `0` until its first observation/calculation.
 
-An import-ready Grafana dashboard covering per-Hue-bridge latency/queues, irrigation decisions, Lawn Dry status, latest temperature/humidity/pressure/wind/light/rain readings, weather history, and completed runs is available at [docs/grafana/loxone-smart-gateway-overview.json](docs/grafana/loxone-smart-gateway-overview.json). Import it in Grafana and select the Prometheus data source that scrapes this gateway. The dashboard uses regex selectors for unit-bearing histogram/gauge names to tolerate Prometheus exporter unit suffixes.
+An import-ready Grafana dashboard covering per-Hue-bridge latency/queues, irrigation decisions, Lawn Dry status, latest temperature/humidity/pressure/wind/light/rain readings and their histories, weather history, and completed runs is available at [docs/grafana/loxone-smart-gateway-overview.json](docs/grafana/loxone-smart-gateway-overview.json). Import it in Grafana and select the Prometheus data source that scrapes this gateway. The dashboard uses regex selectors for unit-bearing histogram/gauge names to tolerate Prometheus exporter unit suffixes.
 
 ## Development
 

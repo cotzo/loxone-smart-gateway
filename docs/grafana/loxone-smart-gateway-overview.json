@@ -334,7 +334,7 @@
       "title": "Observed temperature & humidity",
       "description": "Latest persisted sensor readings over time; values update at the combined weather sample cadence.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 41 },
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [{ "matcher": { "id": "byRegexp", "options": "temperature.*" }, "properties": [{ "id": "unit", "value": "celsius" }] }, { "matcher": { "id": "byRegexp", "options": "humidity.*" }, "properties": [{ "id": "unit", "value": "percent" }] }] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
       "targets": [
@@ -348,7 +348,7 @@
       "title": "Observed wind, light & rainfall",
       "description": "Wind and light are latest persisted sensor points; rain series show rolling 24-hour observed total and cumulative sensor counter.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 41 },
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [{ "matcher": { "id": "byRegexp", "options": "wind.*" }, "properties": [{ "id": "unit", "value": "velocitykmh" }] }, { "matcher": { "id": "byRegexp", "options": "light.*" }, "properties": [{ "id": "unit", "value": "lux" }] }, { "matcher": { "id": "byRegexp", "options": "rain.*" }, "properties": [{ "id": "unit", "value": "lengthmm" }] }] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
       "targets": [
@@ -357,6 +357,17 @@
         { "editorMode": "code", "expr": "{__name__=~\"irrigation_decision_rain_observed_24h(_.*)?\"}", "legendFormat": "rain 24h mm", "refId": "C" },
         { "editorMode": "code", "expr": "{__name__=~\"irrigation_weather_observed_rainfall_counter(_.*)?\"}", "legendFormat": "rain counter mm", "refId": "D" }
       ]
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "Observed pressure",
+      "description": "Pressure from the latest persisted weather observations, shown over time in hPa.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 41 },
+      "fieldConfig": { "defaults": { "unit": "pressurehpa", "decimals": 1, "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single" } },
+      "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_weather_observed_pressure(_.*)?\"}", "legendFormat": "pressure hPa", "refId": "A" }]
     }
   ],
   "refresh": "30s",
