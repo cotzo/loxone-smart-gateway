@@ -136,7 +136,7 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients)
         if (lightType == PhilipsHueLightType.TUNABLE && !IsValidTunableWhiteValue(numeric))
             return false;
 
-        var command = PhilipsHueMessageSender.BuildCommandBody(numeric, lightType, mapping.TransitionTime);
+        var command = HueCommandBuilder.BuildCommandBody(numeric, lightType, mapping.TransitionTime);
         using var content = new StringContent(command, Encoding.UTF8, "application/json");
         var sendStartedAt = DateTimeOffset.UtcNow;
         var requestDuration = Stopwatch.StartNew();

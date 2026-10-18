@@ -240,7 +240,7 @@ public sealed class LoxoneIntegration
             brightness is < 0 or > 100 || kelvin <= 0)
             return false;
 
-        // PhilipsHueMessageSender's TUNABLE format is 200000000 + brightness*10000 + Kelvin.
+        // Hue tunable format is 200000000 + brightness*10000 + Kelvin.
         value = 200_000_000 + Math.Round(brightness) * 10_000 + Math.Round(kelvin);
         return true;
     }
@@ -266,7 +266,7 @@ public sealed class LoxoneIntegration
             return false;
 
         // Convert HSV (hue in degrees; saturation/value in percent) into the
-        // packed BGR-percentage value consumed by PhilipsHueMessageSender.
+        // packed BGR-percentage value consumed by HueCommandBuilder.
         var chroma = brightness / 100 * saturation / 100;
         var hueSector = (hue % 360) / 60;
         var secondary = chroma * (1 - Math.Abs(hueSector % 2 - 1));
