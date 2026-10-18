@@ -8,7 +8,7 @@ using Serilog;
 namespace loxone.smart.gateway.Api.Irrigation;
 
 public sealed record IrrigationBlockOption(string Id, string ServerId, string ServerName, string Control,
-    string ActiveStateUuid, string ZonesStateUuid, string CurrentZoneStateUuid);
+    string ActiveStateUuid, string ZonesStateUuid, string CurrentZoneStateUuid, string ControlUuid = "");
 public sealed record ImportedIrrigationZone(string LoxoneZoneId, string Name, int DurationSeconds);
 public sealed record IrrigationBlockPreview(IrrigationBlockOption Block, bool Active, int CurrentZone,
     IReadOnlyList<ImportedIrrigationZone> Zones);
@@ -37,7 +37,8 @@ public sealed class IrrigationLoxoneService(GatewayStateStore store, LoxoneInteg
                     group.Key.Control,
                     group.First(x => x.State.Equals("active", StringComparison.OrdinalIgnoreCase)).Uuid,
                     group.First(x => x.State.Equals("zones", StringComparison.OrdinalIgnoreCase)).Uuid,
-                    group.First(x => x.State.Equals("currentZone", StringComparison.OrdinalIgnoreCase)).Uuid));
+                    group.First(x => x.State.Equals("currentZone", StringComparison.OrdinalIgnoreCase)).Uuid,
+                    group.Select(x => x.ControlUuid).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty));
         }).OrderBy(x => x.ServerName).ThenBy(x => x.Control).ToList();
     }
 
@@ -58,6 +59,8 @@ public sealed class IrrigationLoxoneService(GatewayStateStore store, LoxoneInteg
     public async Task<IrrigationBlockPreview> ImportAsync(string blockId, CancellationToken cancellationToken)
     {
         var preview = await PreviewAsync(blockId, cancellationToken);
+        if (string.IsNullOrWhiteSpace(preview.Block.ControlUuid))
+            throw new InvalidOperationException("The selected block has no writable control UUID. Refresh Loxone resources and choose/import the block again before using automatic duration updates.");
         var settings = store.GetSnapshot().Settings;
         var config = settings.Irrigation;
         var previousBlockId = config.LoxoneBlock is null ? null : MakeBlockId(config.LoxoneBlock.ServerId, config.LoxoneBlock.Control);
@@ -89,6 +92,7 @@ public sealed class IrrigationLoxoneService(GatewayStateStore store, LoxoneInteg
         {
             ServerId = preview.Block.ServerId,
             Control = preview.Block.Control,
+            ControlUuid = preview.Block.ControlUuid,
             ActiveStateUuid = preview.Block.ActiveStateUuid,
             ZonesStateUuid = preview.Block.ZonesStateUuid,
             CurrentZoneStateUuid = preview.Block.CurrentZoneStateUuid
@@ -208,6 +212,10 @@ public sealed class IrrigationLoxoneService(GatewayStateStore store, LoxoneInteg
         return "loxone-" + hash;
     }
 
-    private static string MakeBlockId(string serverId, string control) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{serverId}|{control}")))[..24].ToLowerInvariant();
+    internal static string MakeBlockIdForSync(string serverId, string control) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{serverId}|{control}")))[..24].ToLowerInvariant();
+    private static string MakeBlockId(string serverId, string control) => MakeBlockIdForSync(serverId, control);
+    internal static bool IsInactiveForSync(string active, string currentZone) =>
+        (active.Trim().Equals("0", StringComparison.Ordinal) || active.Trim().Equals("false", StringComparison.OrdinalIgnoreCase)) &&
+        currentZone.Trim().Equals("-1", StringComparison.Ordinal);
     private static string NormalizeUuid(string uuid) => uuid.Replace("-", string.Empty, StringComparison.Ordinal);
 }

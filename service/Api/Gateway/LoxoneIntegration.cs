@@ -71,6 +71,37 @@ public sealed class LoxoneIntegration
     public async Task CheckAsync(LoxoneSettings server, CancellationToken cancellationToken) =>
         _ = await DiscoverAsync(server, cancellationToken);
 
+    public async Task SetIrrigationDurationsAsync(LoxoneSettings server, string controlUuid,
+        IReadOnlyDictionary<string, int> durationsByZoneId, CancellationToken cancellationToken)
+    {
+        var command = BuildIrrigationDurationsCommand(controlUuid, durationsByZoneId);
+        using var client = new WebsocketWebserviceClient(server.Host, server.Port, 2, Guid.NewGuid().ToString(), "Loxone Smart Gateway", server.UseTls, server.CertificateAuthorityPem);
+        client.OnAuthenticated += (_, _) => { };
+        await PrimePublicKeyAsync(client);
+        using var tokenHandler = new TokenHandler(client, server.Username);
+        tokenHandler.SetPassword(server.Password);
+        await AuthenticateAsync(client, tokenHandler);
+        var response = await client.SendWebservice(new WebserviceRequest<string>(command, EncryptionType.None));
+        if (response is null)
+            throw new IOException($"Miniserver did not acknowledge irrigation duration command for {controlUuid}.");
+        Log.Information("Updated irrigation durations on Loxone block {ControlUuid} ({ZoneCount} zones)", controlUuid, durationsByZoneId.Count);
+    }
+
+    internal static string BuildIrrigationDurationsCommand(string controlUuid, IReadOnlyDictionary<string, int> durationsByZoneId)
+    {
+        if (string.IsNullOrWhiteSpace(controlUuid)) throw new ArgumentException("A Loxone control UUID is required.", nameof(controlUuid));
+        if (durationsByZoneId.Count == 0) throw new ArgumentException("At least one irrigation zone duration is required.", nameof(durationsByZoneId));
+        var values = durationsByZoneId.OrderBy(x => int.TryParse(x.Key, out var id) ? id : int.MaxValue)
+            .Select(x =>
+            {
+                if (!int.TryParse(x.Key, out var zoneId) || zoneId is < 0 or > 7)
+                    throw new ArgumentException($"Invalid Loxone irrigation zone ID '{x.Key}'.", nameof(durationsByZoneId));
+                if (x.Value < 0) throw new ArgumentOutOfRangeException(nameof(durationsByZoneId), "Zone durations cannot be negative.");
+                return $"{zoneId}={x.Value}";
+            });
+        return $"jdev/sps/io/{controlUuid}/setDurations/{string.Join("/", values)}";
+    }
+
     public async Task RunSessionAsync(LoxoneSettings server, Action<string, string> onValue, Action<string> status,
         IReadOnlySet<string> watchedStateUuids, CancellationToken cancellationToken, int sessionAttempt = 1)
     {
@@ -164,6 +195,8 @@ public sealed class LoxoneIntegration
     }
 
     private static string NormalizeUuid(string uuid) => uuid.Replace("-", string.Empty, StringComparison.Ordinal);
+
+    internal static string NormalizeStateUuidForSync(string uuid) => NormalizeUuid(uuid);
 
     internal static HashSet<string> NormalizeStateUuids(IEnumerable<string> uuids) =>
         uuids.Where(uuid => !string.IsNullOrWhiteSpace(uuid))
@@ -287,12 +320,13 @@ public sealed class LoxoneIntegration
             var name = item.TryGetProperty("name", out var nameNode) ? nameNode.GetString() ?? control.Name : control.Name;
             var path = string.IsNullOrEmpty(parent) ? name : $"{parent} / {name}";
             var type = item.TryGetProperty("type", out var typeNode) ? typeNode.GetString() ?? "" : "";
+            var controlUuid = item.TryGetProperty("uuidAction", out var actionNode) ? actionNode.GetString() ?? "" : "";
             if (item.TryGetProperty("states", out var states) && states.ValueKind == JsonValueKind.Object)
             {
                 foreach (var state in states.EnumerateObject())
                 {
                     var uuid = state.Value.GetString();
-                    if (!string.IsNullOrWhiteSpace(uuid)) result.Add(new LoxoneStateOption(uuid, path, type, state.Name, serverId));
+                    if (!string.IsNullOrWhiteSpace(uuid)) result.Add(new LoxoneStateOption(uuid, path, type, state.Name, serverId, controlUuid));
                 }
             }
             if (item.TryGetProperty("subControls", out var subControls)) ReadControls(subControls, path, result, serverId);

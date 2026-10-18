@@ -53,6 +53,7 @@ builder.Services.AddSingleton<GatewayStateStore>();
 builder.Services.AddSingleton<LoxoneIntegration>();
 builder.Services.AddSingleton<DeviceIntegrations>();
 builder.Services.AddHostedService<GatewayRuntimeService>();
+builder.Services.AddHostedService<IrrigationDurationSyncService>();
 
 builder.Services.AddHttpClient("HueDynamic")
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler

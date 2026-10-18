@@ -46,6 +46,7 @@ public sealed class IrrigationLoxoneBlockConfiguration
 {
     public string ServerId { get; set; } = string.Empty;
     public string Control { get; set; } = string.Empty;
+    public string ControlUuid { get; set; } = string.Empty;
     public string ActiveStateUuid { get; set; } = string.Empty;
     public string ZonesStateUuid { get; set; } = string.Empty;
     public string CurrentZoneStateUuid { get; set; } = string.Empty;

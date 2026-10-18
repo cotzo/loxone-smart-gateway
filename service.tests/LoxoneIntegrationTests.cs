@@ -6,6 +6,39 @@ namespace service.tests;
 public sealed class LoxoneIntegrationTests
 {
     [Fact]
+    public void BuildsBatchIrrigationDurationCommandWithZeroBasedZoneIds()
+    {
+        var command = LoxoneIntegration.BuildIrrigationDurationsCommand("control-uuid", new Dictionary<string, int>
+        {
+            ["1"] = 240,
+            ["0"] = 120
+        });
+
+        Assert.Equal("jdev/sps/io/control-uuid/setDurations/0=120/1=240", command);
+    }
+
+    [Theory]
+    [InlineData("", "0")]
+    [InlineData("control", "8")]
+    [InlineData("control", "not-a-zone")]
+    public void RejectsInvalidIrrigationDurationCommands(string controlUuid, string zoneId)
+    {
+        Assert.ThrowsAny<ArgumentException>(() => LoxoneIntegration.BuildIrrigationDurationsCommand(
+            controlUuid, new Dictionary<string, int> { [zoneId] = 120 }));
+    }
+
+    [Theory]
+    [InlineData("false", "-1", true)]
+    [InlineData("0", "-1", true)]
+    [InlineData("true", "-1", false)]
+    [InlineData("false", "0", false)]
+    [InlineData("unknown", "-1", false)]
+    public void OnlyConsidersBlockIdleWhenBothStatesConfirmIt(string active, string currentZone, bool expected)
+    {
+        Assert.Equal(expected, loxone.smart.gateway.Api.Irrigation.IrrigationLoxoneService.IsInactiveForSync(active, currentZone));
+    }
+
+    [Fact]
     public void NormalizesWatchedStateUuidsToMatchLoxoneEventUuids()
     {
         var watched = LoxoneIntegration.NormalizeStateUuids(
