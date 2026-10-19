@@ -76,6 +76,7 @@ builder.Services.AddSingleton<IrrigationMetrics>();
 builder.Services.AddSingleton<LoxoneIntegration>();
 builder.Services.AddSingleton<DeviceIntegrations>();
 builder.Services.AddHostedService<GatewayRuntimeService>();
+builder.Services.AddHostedService<HueGroupMembershipSyncService>();
 builder.Services.AddHostedService<IrrigationDurationSyncService>();
 builder.Services.AddHostedService<IrrigationSignalSyncService>();
 builder.Services.AddHostedService<IrrigationWeatherStateService>(provider => provider.GetRequiredService<IrrigationWeatherStateService>());
