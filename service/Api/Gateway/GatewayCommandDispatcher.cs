@@ -127,19 +127,37 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
             try
             {
                 using var converted = JsonDocument.Parse(MappingValueConverter.Convert(mapping, command.SourceValue).GetRawText());
-                if (!DeviceIntegrations.TryBuildHueCommandBody(mapping, converted.RootElement, out var body)) continue;
+                if (!DeviceIntegrations.TryBuildHueCommandBody(mapping, converted.RootElement, out var body))
+                {
+                    Log.Debug("Cannot optimize Hue mapping {Mapping}: converted value is not valid for command type {CommandType}",
+                        mapping.Name, mapping.HueLightType);
+                    continue;
+                }
                 var catalog = settings.HueResourceCatalogs.GetValueOrDefault(mapping.TargetConnectionId);
                 var resource = catalog?.Resources.FirstOrDefault(resource => resource.Type == "grouped_light" && resource.Id.Equals(mapping.TargetId, StringComparison.OrdinalIgnoreCase));
-                if (resource?.MemberIds is not { Count: > 0 }) continue;
+                if (resource?.MemberIds is not { Count: > 0 })
+                {
+                    Log.Debug("Cannot optimize Hue mapping {Mapping}: grouped-light {TargetId} has no discovered member-light list",
+                        mapping.Name, mapping.TargetId);
+                    continue;
+                }
                 prepared.Add((command, body, new HashSet<string>(resource.MemberIds, StringComparer.OrdinalIgnoreCase)));
+                Log.Debug("Hue optimization input {Mapping}: command {CommandBody}; member lights [{MemberIds}]",
+                    mapping.Name, body, string.Join(",", resource.MemberIds));
             }
-            catch
+            catch (Exception ex)
             {
                 // Preserve the normal queued validation and retry path for values that cannot be prepared.
+                Log.Debug(ex, "Cannot prepare Hue mapping {Mapping} for grouped-light optimization", mapping.Name);
             }
         }
 
-        if (prepared.Count < 2) return commands;
+        if (prepared.Count < 2)
+        {
+            Log.Debug("Hue grouped-light batch is not eligible for combination: {EligibleCount} of {CommandCount} updates have valid commands and discovered member-light lists",
+                prepared.Count, commands.Count);
+            return commands;
+        }
         var used = new HashSet<GatewayCommand>();
         var replacements = new Dictionary<GatewayCommand, GatewayCommand>();
         foreach (var bridgeGroup in prepared.GroupBy(item => item.Command.Mapping.TargetConnectionId, StringComparer.OrdinalIgnoreCase))
@@ -154,10 +172,27 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
                 var relevant = bridgeGroup.Where(item => !used.Contains(item.Command) &&
                     !item.Command.Mapping.TargetId.Equals(candidate.Id, StringComparison.OrdinalIgnoreCase) &&
                     item.Members.Overlaps(candidateMembers)).ToArray();
-                if (relevant.Length < 2 || relevant.Any(item => !item.Members.IsSubsetOf(candidateMembers))) continue;
-                if (relevant.Select(item => item.Body).Distinct(StringComparer.Ordinal).Skip(1).Any()) continue;
+                if (relevant.Length < 2) continue;
+                var outsideCandidate = relevant.Where(item => !item.Members.IsSubsetOf(candidateMembers)).ToArray();
+                if (outsideCandidate.Length > 0)
+                {
+                    Log.Debug("Hue group candidate {CandidateName} ({CandidateId}) rejected: mapped group(s) {Mappings} include lights outside the candidate room/zone",
+                        candidate.Name, candidate.Id, string.Join(", ", outsideCandidate.Select(item => item.Command.Mapping.Name)));
+                    continue;
+                }
+                if (relevant.Select(item => item.Body).Distinct(StringComparer.Ordinal).Skip(1).Any())
+                {
+                    Log.Debug("Hue group candidate {CandidateName} ({CandidateId}) rejected: mapped commands differ ({Commands})",
+                        candidate.Name, candidate.Id, string.Join(" | ", relevant.Select(item => $"{item.Command.Mapping.Name}={item.Body}")));
+                    continue;
+                }
                 var covered = new HashSet<string>(relevant.SelectMany(item => item.Members), StringComparer.OrdinalIgnoreCase);
-                if (!covered.SetEquals(candidateMembers)) continue;
+                if (!covered.SetEquals(candidateMembers))
+                {
+                    Log.Debug("Hue group candidate {CandidateName} ({CandidateId}) rejected: exact light coverage differs; mapped union [{MappedLightIds}], candidate lights [{CandidateLightIds}]",
+                        candidate.Name, candidate.Id, string.Join(",", covered), string.Join(",", candidateMembers));
+                    continue;
+                }
 
                 var representative = relevant[0].Command;
                 var aggregateMapping = new DeviceMapping
@@ -183,6 +218,9 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
                 _metrics.RecordHueGroupOptimization(relevant.Length, bridgeName);
             }
         }
+
+        if (replacements.Count == 0)
+            Log.Debug("No exact Hue room/zone grouped-light resource covers the collected mapped light sets with matching commands");
 
         var output = new List<GatewayCommand>();
         var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

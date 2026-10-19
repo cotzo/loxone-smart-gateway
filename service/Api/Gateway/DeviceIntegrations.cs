@@ -18,6 +18,7 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
         var resources = new List<HueResource>();
         var locations = new Dictionary<string, (string Name, string Type)>(StringComparer.OrdinalIgnoreCase);
         var membership = new Dictionary<string, (string? RoomId, string? ZoneId)>(StringComparer.OrdinalIgnoreCase);
+        var locationChildren = new Dictionary<string, List<(string Id, string Type)>>(StringComparer.OrdinalIgnoreCase);
         foreach (var type in new[] { "room", "zone" })
         {
             using var response = await client.GetAsync($"/clip/v2/resource/{type}", cancellationToken);
@@ -36,16 +37,55 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
                     if (!string.IsNullOrWhiteSpace(name)) locationName = name;
                 }
                 locations[locationId] = (locationName, type);
+                var locationChildRefs = new List<(string Id, string Type)>();
+                locationChildren[locationId] = locationChildRefs;
                 if (!item.TryGetProperty("children", out var children)) continue;
                 foreach (var child in children.EnumerateArray())
                 {
                     if (!child.TryGetProperty("rid", out var childId)) continue;
                     var rid = childId.GetString();
                     if (string.IsNullOrWhiteSpace(rid)) continue;
+                    var childType = child.TryGetProperty("rtype", out var childTypeValue) ? childTypeValue.GetString() : null;
+                    locationChildRefs.Add((rid, childType ?? string.Empty));
                     var current = membership.GetValueOrDefault(rid);
                     membership[rid] = type == "room" ? (locationId, current.ZoneId) : (current.RoomId, locationId);
                 }
             }
+        }
+
+        // Keep location membership many-to-many. A device may be a member of more than one Hue
+        // zone, and zone children may be devices directly or rooms; neither case requires the
+        // zone to have a unique parent-room mapping.
+        var locationDeviceIds = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var locationLightIds = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (locationId, locationType) in locations.Where(entry => entry.Value.Type == "room"))
+        {
+            var devices = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var lights = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var child in locationChildren.GetValueOrDefault(locationId) ?? [])
+            {
+                if (child.Type == "device") devices.Add(child.Id);
+                else if (child.Type == "light") lights.Add(child.Id);
+            }
+            locationDeviceIds[locationId] = devices;
+            locationLightIds[locationId] = lights;
+        }
+        foreach (var (locationId, locationType) in locations.Where(entry => entry.Value.Type == "zone"))
+        {
+            var devices = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var lights = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var child in locationChildren.GetValueOrDefault(locationId) ?? [])
+            {
+                if (child.Type == "device") devices.Add(child.Id);
+                else if (child.Type == "light") lights.Add(child.Id);
+                else if (child.Type == "room")
+                {
+                    devices.UnionWith(locationDeviceIds.GetValueOrDefault(child.Id) ?? []);
+                    lights.UnionWith(locationLightIds.GetValueOrDefault(child.Id) ?? []);
+                }
+            }
+            locationDeviceIds[locationId] = devices;
+            locationLightIds[locationId] = lights;
         }
 
         using (var response = await client.GetAsync("/clip/v2/resource/device", cancellationToken))
@@ -72,6 +112,7 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
         }
 
         var groupedLightNumber = 0;
+        var lightOwners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var type in new[] { "light", "grouped_light" })
         {
             using var response = await client.GetAsync($"/clip/v2/resource/{type}", cancellationToken);
@@ -88,6 +129,8 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
                 string? ownerType = null;
                 if (item.TryGetProperty("owner", out var owner) && owner.TryGetProperty("rid", out var ownerIdValue)) ownerId = ownerIdValue.GetString();
                 if (item.TryGetProperty("owner", out owner) && owner.TryGetProperty("rtype", out var ownerTypeValue)) ownerType = ownerTypeValue.GetString();
+                if (type == "light" && !string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(ownerId))
+                    lightOwners[id] = ownerId;
                 var membershipInfo = ownerId is not null ? membership.GetValueOrDefault(ownerId) : default;
                 if (type == "grouped_light" && ownerId is not null && ownerType is "room" or "zone")
                     membershipInfo = ownerType == "room" ? (ownerId, membershipInfo.ZoneId) : (membershipInfo.RoomId, ownerId);
@@ -105,16 +148,35 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
                     IReadOnlyList<string>? memberIds = null;
                     if (type == "grouped_light")
                     {
-                        var groupRoomId = ownerType == "room" ? ownerId : membershipInfo.RoomId;
-                        var groupZoneId = ownerType == "zone" ? ownerId : membershipInfo.ZoneId;
-                        memberIds = resources.Where(resource => resource.Type == "light" &&
-                                (groupRoomId is not null
-                                    ? resource.RoomId?.Equals(groupRoomId, StringComparison.OrdinalIgnoreCase) == true
-                                    : groupZoneId is not null && resource.ZoneId?.Equals(groupZoneId, StringComparison.OrdinalIgnoreCase) == true))
-                            .Select(resource => resource.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                        // A grouped_light is owned by its room or zone. Resolve its coverage from
+                        // physical light membership, not from other grouped_light resources: rooms
+                        // and zones contain devices/lights, never child group-control resources.
+                        var locationId = ownerType is "room" or "zone" ? ownerId : null;
+                        if (locationId is not null && locationDeviceIds.TryGetValue(locationId, out var deviceIds))
+                        {
+                            var directLightIds = locationLightIds.GetValueOrDefault(locationId) ?? [];
+                            memberIds = resources.Where(resource => resource.Type == "light" &&
+                                    (directLightIds.Contains(resource.Id) ||
+                                     (lightOwners.TryGetValue(resource.Id, out var lightOwnerId) && deviceIds.Contains(lightOwnerId))))
+                                .Select(resource => resource.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                        }
+                        else
+                        {
+                            var groupRoomId = membershipInfo.RoomId;
+                            var groupZoneId = membershipInfo.ZoneId;
+                            memberIds = resources.Where(resource => resource.Type == "light" &&
+                                    (groupRoomId is not null
+                                        ? resource.RoomId?.Equals(groupRoomId, StringComparison.OrdinalIgnoreCase) == true
+                                        : groupZoneId is not null && resource.ZoneId?.Equals(groupZoneId, StringComparison.OrdinalIgnoreCase) == true))
+                                .Select(resource => resource.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                        }
                     }
                     resources.Add(new HueResource(id, type, displayName, bridge.Id,
                         membershipInfo.RoomId, room.Name, membershipInfo.ZoneId, zone.Name, memberIds));
+                    if (type == "grouped_light")
+                        Log.Debug("Discovered Hue grouped-light {Name} ({GroupedLightId}); owner {OwnerType}/{OwnerId}, room {RoomId}, zone {ZoneId}, member lights [{MemberIds}]",
+                            displayName, id, ownerType, ownerId, membershipInfo.RoomId, membershipInfo.ZoneId,
+                            memberIds is null ? "unknown" : string.Join(",", memberIds));
                 }
             }
         }
