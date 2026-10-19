@@ -91,6 +91,26 @@ public sealed class IrrigationServiceTests
     }
 
     [Fact]
+    public async Task LatestObservation_IsPublishedAsASafeSnapshot()
+    {
+        var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{},\"IrrigationRuns\":[]}");
+        try
+        {
+            var service = CreateService(stateFile, new Dictionary<string, string?>());
+            Assert.Null(service.GetLatestObservation());
+
+            var observation = Obs(3, DateTimeOffset.UtcNow);
+            await service.AddObservationAsync(observation, CancellationToken.None);
+
+            Assert.Equal(observation.RainfallMm, service.GetLatestObservation()?.RainfallMm);
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(stateFile)!, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task SharedBalanceGroup_RuntimeUsesCombinedApplicationRate()
     {
         var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{\"LawnEast\":5},\"IrrigationRuns\":[]}");
