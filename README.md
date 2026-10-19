@@ -28,6 +28,8 @@ Open `http://<gateway-ip>:8080`. The named `gateway-data` volume stores encrypte
 
 The gateway subscribes to Loxone state updates and applies the initial state snapshot as well as subsequent changes. After a Miniserver reconnect, a fresh snapshot restores mapped provider state. Failed provider commands remain queued in memory and retry with capped exponential backoff; once accepted by Hue/Tuya, the command is considered synchronized. The gateway does not independently read back target state. This is command synchronization, not a durable event journal: if the gateway itself restarts while a target is offline, the next Loxone snapshot replays the current state.
 
+For bridges with mapped Hue grouped lights, the gateway refreshes discovered Hue resources and group membership at startup and every 24 hours. The refreshed catalog is persisted without restarting the Loxone state subscriptions.
+
 Mapping modes:
 
 | Mode | Behavior |
