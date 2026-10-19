@@ -130,4 +130,3 @@ public sealed class GatewayRuntimeService(
 
     private static string NormalizeUuid(string uuid) => uuid.Replace("-", string.Empty, StringComparison.Ordinal);
 }
-
