@@ -118,16 +118,16 @@ public sealed class GatewayRuntimeService(
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception ex) { Log.Warning(ex, "Unable to process mapped irrigation weather state {Uuid} from Miniserver {ServerId}", state.Uuid, serverId); }
                 var settings = store.GetSnapshot().Settings;
-                foreach (var mapping in settings.Mappings.Where(x =>
+                var matchedMappings = settings.Mappings.Where(x =>
                              x.LoxoneServerId.Equals(serverId, StringComparison.OrdinalIgnoreCase) &&
-                             NormalizeUuid(x.LoxoneStateUuid).Equals(NormalizeUuid(state.Uuid), StringComparison.OrdinalIgnoreCase)))
-                {
+                             NormalizeUuid(x.LoxoneStateUuid).Equals(NormalizeUuid(state.Uuid), StringComparison.OrdinalIgnoreCase)).ToArray();
+                foreach (var mapping in matchedMappings)
                     Log.Information("Loxone state {uuid} matched mapping {mapping}; queuing target update after {EventToQueueMs:F1} ms", state.Uuid, mapping.Name, (DateTimeOffset.UtcNow - state.ReceivedAt).TotalMilliseconds);
-                    dispatcher.Enqueue(mapping, state.Value, state.ReceivedAt);
-                }
+                dispatcher.EnqueueBatch(matchedMappings, state.Value, state.ReceivedAt);
             }
         }
     }
 
     private static string NormalizeUuid(string uuid) => uuid.Replace("-", string.Empty, StringComparison.Ordinal);
 }
+
