@@ -73,18 +73,35 @@ public sealed class GatewayStateStore
         return catalog;
     }
 
+    public async Task<HueResourceCatalog?> RefreshHueResourceCatalogAsync(
+        string bridgeId,
+        IReadOnlyList<HueResource> resources,
+        CancellationToken cancellationToken)
+    {
+        await _saveGate.WaitAsync(cancellationToken);
+        try
+        {
+            GatewaySettings settings;
+            lock (_lock) settings = Clone(_settings);
+            if (!settings.HueBridges.Any(bridge => bridge.Id.Equals(bridgeId, StringComparison.OrdinalIgnoreCase)))
+                return null;
+
+            var catalog = new HueResourceCatalog(DateTimeOffset.UtcNow, resources);
+            settings.HueResourceCatalogs[bridgeId] = catalog;
+            await PersistSettingsAsync(settings, cancellationToken);
+            lock (_lock) _settings = Clone(settings);
+            return catalog;
+        }
+        finally { _saveGate.Release(); }
+    }
+
     public async Task SaveAsync(GatewaySettings settings, CancellationToken cancellationToken)
     {
         Validate(settings);
         await _saveGate.WaitAsync(cancellationToken);
         try
         {
-            var json = JsonSerializer.Serialize(settings, JsonOptions);
-            var protectedJson = _protector.Protect(json);
-            var tempPath = _filePath + ".tmp";
-            await File.WriteAllTextAsync(tempPath, protectedJson, cancellationToken);
-            TryRestrictFilePermissions(tempPath);
-            File.Move(tempPath, _filePath, true);
+            await PersistSettingsAsync(settings, cancellationToken);
 
             TaskCompletionSource changed;
             lock (_lock)
@@ -97,6 +114,16 @@ public sealed class GatewayStateStore
             changed.TrySetResult();
         }
         finally { _saveGate.Release(); }
+    }
+
+    private async Task PersistSettingsAsync(GatewaySettings settings, CancellationToken cancellationToken)
+    {
+        var json = JsonSerializer.Serialize(settings, JsonOptions);
+        var protectedJson = _protector.Protect(json);
+        var tempPath = _filePath + ".tmp";
+        await File.WriteAllTextAsync(tempPath, protectedJson, cancellationToken);
+        TryRestrictFilePermissions(tempPath);
+        File.Move(tempPath, _filePath, true);
     }
 
     public Task WaitForChangeAsync(long version, TimeSpan timeout, CancellationToken cancellationToken)
