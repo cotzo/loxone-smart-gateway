@@ -315,6 +315,10 @@ public sealed class IrrigationService
             _forecastValidUntil = now.AddHours(Math.Max(1, options.ForecastHours));
             return _cachedForecast;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "Unable to retrieve irrigation forecast; continuing without forecast adjustment");
