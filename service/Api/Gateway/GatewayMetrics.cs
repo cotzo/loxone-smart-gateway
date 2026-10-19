@@ -79,4 +79,3 @@ public sealed class GatewayMetrics : IDisposable
 
     public void Dispose() => _meter.Dispose();
 }
-
