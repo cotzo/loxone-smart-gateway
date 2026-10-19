@@ -10,6 +10,9 @@ public sealed class GatewayMetrics : IDisposable
     private readonly Meter _meter = new(MeterName);
     private readonly Counter<long> _commands = null!;
     private readonly Counter<long> _coalesced = null!;
+    private readonly Counter<long> _hueGroupOptimizations = null!;
+    private readonly Counter<long> _hueGroupRequests = null!;
+    private readonly Counter<long> _hueGroupRequestsSaved = null!;
     private readonly Counter<long> _retries = null!;
     private readonly Counter<long> _failures = null!;
     private readonly UpDownCounter<long> _pending = null!;
@@ -21,6 +24,9 @@ public sealed class GatewayMetrics : IDisposable
     {
         _commands = _meter.CreateCounter<long>("gateway.provider.commands", unit: "{command}", description: "Provider commands dispatched, by provider and outcome.");
         _coalesced = _meter.CreateCounter<long>("gateway.provider.commands.coalesced", unit: "{command}", description: "Pending latest-value commands replaced by newer values.");
+        _hueGroupOptimizations = _meter.CreateCounter<long>("gateway.hue.group.optimizations", unit: "{optimization}", description: "Hue grouped-light command bundles replaced with one larger group request.");
+        _hueGroupRequests = _meter.CreateCounter<long>("gateway.hue.group.requests", unit: "{request}", description: "Individual Hue grouped-light requests represented by group optimizations.");
+        _hueGroupRequestsSaved = _meter.CreateCounter<long>("gateway.hue.group.requests.saved", unit: "{request}", description: "Hue grouped-light requests avoided by exact-coverage group optimizations.");
         _retries = _meter.CreateCounter<long>("gateway.provider.command.retries", unit: "{retry}", description: "Provider command retry attempts scheduled.");
         _failures = _meter.CreateCounter<long>("gateway.provider.command.failures", unit: "{failure}", description: "Provider commands that exhausted retries.");
         _pending = _meter.CreateUpDownCounter<long>("gateway.provider.queue.pending", unit: "{command}", description: "Current unique pending commands in provider queues.");
@@ -42,6 +48,15 @@ public sealed class GatewayMetrics : IDisposable
 
     public void RecordCommand(string provider, string resourceType, string outcome, string? bridge = null) =>
         _commands.Add(1, Tags(provider, resourceType, ("outcome", outcome), bridge));
+
+    public void RecordHueGroupOptimization(int requestCount, string? bridge = null)
+    {
+        if (requestCount < 2) return;
+        var tags = Tags("hue", "grouped_light", bridge: bridge);
+        _hueGroupOptimizations.Add(1, tags);
+        _hueGroupRequests.Add(requestCount, tags);
+        _hueGroupRequestsSaved.Add(requestCount - 1, tags);
+    }
 
     public void RecordFailure(string provider, string resourceType, string? bridge = null) => _failures.Add(1, Tags(provider, resourceType, bridge: bridge));
 

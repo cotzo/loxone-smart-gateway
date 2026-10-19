@@ -28,6 +28,8 @@ Open `http://<gateway-ip>:8080`. The named `gateway-data` volume stores encrypte
 
 The gateway subscribes to Loxone state updates and applies the initial state snapshot as well as subsequent changes. After a Miniserver reconnect, a fresh snapshot restores mapped provider state. Failed provider commands remain queued in memory and retry with capped exponential backoff; once accepted by Hue/Tuya, the command is considered synchronized. The gateway does not independently read back target state. This is command synchronization, not a durable event journal: if the gateway itself restarts while a target is offline, the next Loxone snapshot replays the current state.
 
+For bridges with mapped Hue grouped lights, the gateway refreshes discovered Hue resources and group membership at startup and every 24 hours. The refreshed catalog is persisted without restarting the Loxone state subscriptions.
+
 Mapping modes:
 
 | Mode | Behavior |
@@ -55,6 +57,7 @@ Provider metrics use only bounded labels (`provider`, Hue `bridge` display name,
 - `gateway_provider_request_duration` — histogram, Hue HTTP request or full Tuya local connect-and-send duration.
 - `gateway_provider_commands` — counter by provider/resource type and success, failure, or invalid input outcome.
 - `gateway_provider_commands_coalesced`, `gateway_provider_command_retries`, `gateway_provider_command_failures` — replaced pending values, scheduled retries, and commands dropped after exhausting retries.
+- `gateway_hue_group_optimizations`, `gateway_hue_group_requests`, `gateway_hue_group_requests_saved` — exact-coverage Hue group optimizations applied, original grouped-light requests represented, and requests avoided. The dashboard calculates the reduction percentage from saved / represented requests.
 - `gateway_provider_queue_pending` — current unique pending commands.
 - `irrigation_weather_observations_committed`, `irrigation_weather_observation_interval` — committed observation count and spacing.
 - `irrigation_weather_observations_stored`, `irrigation_weather_latest_age`, `irrigation_weather_history_span` — retained weather history size, freshness, and time coverage.

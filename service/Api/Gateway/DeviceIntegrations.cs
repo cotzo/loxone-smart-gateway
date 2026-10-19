@@ -10,6 +10,8 @@ namespace loxone.smart.gateway.Api.Gateway;
 
 public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetrics? metrics = null)
 {
+    private const string RoomDisplaySeparator = "\u00B7";
+
     public async Task<IReadOnlyList<HueResource>> GetHueResourcesAsync(HueSettings bridge, CancellationToken cancellationToken)
     {
         using var client = CreateHueClient(bridge);
@@ -97,9 +99,23 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
                 if (type == "grouped_light" && (string.IsNullOrWhiteSpace(name) || Guid.TryParse(name, out _)))
                     name = room.Name ?? zone.Name ?? $"Hue group {groupedLightNumber}";
                 var displayName = name ?? id ?? string.Empty;
-                if (type == "light" && room.Name is not null) displayName = $"{displayName} · {room.Name}";
-                if (!string.IsNullOrWhiteSpace(id)) resources.Add(new HueResource(id, type, displayName, bridge.Id,
-                    membershipInfo.RoomId, room.Name, membershipInfo.ZoneId, zone.Name));
+                if (type == "light" && room.Name is not null) displayName = $"{displayName} {RoomDisplaySeparator} {room.Name}";
+                if (!string.IsNullOrWhiteSpace(id))
+                {
+                    IReadOnlyList<string>? memberIds = null;
+                    if (type == "grouped_light")
+                    {
+                        var groupRoomId = ownerType == "room" ? ownerId : membershipInfo.RoomId;
+                        var groupZoneId = ownerType == "zone" ? ownerId : membershipInfo.ZoneId;
+                        memberIds = resources.Where(resource => resource.Type == "light" &&
+                                (groupRoomId is not null
+                                    ? resource.RoomId?.Equals(groupRoomId, StringComparison.OrdinalIgnoreCase) == true
+                                    : groupZoneId is not null && resource.ZoneId?.Equals(groupZoneId, StringComparison.OrdinalIgnoreCase) == true))
+                            .Select(resource => resource.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                    }
+                    resources.Add(new HueResource(id, type, displayName, bridge.Id,
+                        membershipInfo.RoomId, room.Name, membershipInfo.ZoneId, zone.Name, memberIds));
+                }
             }
         }
         return resources;
@@ -115,28 +131,9 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
     public async Task<bool> SendHueAsync(HueSettings bridge, DeviceMapping mapping, JsonElement value, CancellationToken cancellationToken, DateTimeOffset? sourceReceivedAt = null)
     {
         using var client = CreateHueClient(bridge);
-        var lightType = mapping.HueLightType;
-        int numeric;
-        if (value.ValueKind == JsonValueKind.True)
-        {
-            lightType = PhilipsHueLightType.ONOFF;
-            numeric = 1;
-        }
-        else if (value.ValueKind == JsonValueKind.False)
-        {
-            lightType = PhilipsHueLightType.ONOFF;
-            numeric = 0;
-        }
-        else if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) && double.IsFinite(number))
-        {
-            numeric = (int)Math.Round(number);
-        }
-        else throw new InvalidOperationException("Hue commands require a numeric or Boolean converted value.");
-
-        if (lightType == PhilipsHueLightType.TUNABLE && !IsValidTunableWhiteValue(numeric))
+        if (!TryBuildHueCommandBody(mapping, value, out var command))
             return false;
 
-        var command = HueCommandBuilder.BuildCommandBody(numeric, lightType, mapping.TransitionTime);
         using var content = new StringContent(command, Encoding.UTF8, "application/json");
         var sendStartedAt = DateTimeOffset.UtcNow;
         var requestDuration = Stopwatch.StartNew();
@@ -173,6 +170,36 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
                 throw new InvalidOperationException($"Hue rejected the command: {errors}");
         }
 
+        return true;
+    }
+
+    internal static bool TryBuildHueCommandBody(DeviceMapping mapping, JsonElement value, out string command)
+    {
+        var lightType = mapping.HueLightType;
+        int numeric;
+        if (value.ValueKind == JsonValueKind.True)
+        {
+            lightType = PhilipsHueLightType.ONOFF;
+            numeric = 1;
+        }
+        else if (value.ValueKind == JsonValueKind.False)
+        {
+            lightType = PhilipsHueLightType.ONOFF;
+            numeric = 0;
+        }
+        else if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) && double.IsFinite(number))
+        {
+            numeric = (int)Math.Round(number);
+        }
+        else throw new InvalidOperationException("Hue commands require a numeric or Boolean converted value.");
+
+        if (lightType == PhilipsHueLightType.TUNABLE && !IsValidTunableWhiteValue(numeric))
+        {
+            command = string.Empty;
+            return false;
+        }
+
+        command = HueCommandBuilder.BuildCommandBody(numeric, lightType, mapping.TransitionTime);
         return true;
     }
 

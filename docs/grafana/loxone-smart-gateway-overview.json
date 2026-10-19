@@ -28,7 +28,7 @@
       }
     ]
   },
-  "description": "Operational dashboard for Loxone Smart Gateway provider command latency, queues, irrigation decisions, Lawn Dry state, and persisted weather/run history. Expects Prometheus scraping /metrics with Configuration__EnablePrometheus=true.",
+  "description": "Operational dashboard for Loxone Smart Gateway provider latency and queues, Hue grouped-light request reduction, irrigation decisions, Lawn Dry state, and persisted weather/run history. Expects Prometheus scraping /metrics with Configuration__EnablePrometheus=true.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -102,11 +102,63 @@
       ]
     },
     {
+      "id": 29,
+      "type": "row",
+      "title": "Hue grouped-light optimization",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "panels": []
+    },
+    {
+      "id": 30,
+      "type": "stat",
+      "title": "Hue group optimizations",
+      "description": "Number of exact-coverage grouped-light bundles routed as one larger Hue group request in the selected time range.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "editorMode": "code", "expr": "sum(increase({__name__=~\"gateway_hue_group_optimizations(_total)?\", bridge=~\"$bridge\"}[$__range]))", "legendFormat": "optimizations", "refId": "A" }]
+    },
+    {
+      "id": 31,
+      "type": "stat",
+      "title": "Requests represented",
+      "description": "Individual grouped-light requests that would have been sent without the optimization, across exact-coverage bundles.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "editorMode": "code", "expr": "sum(increase({__name__=~\"gateway_hue_group_requests(_total)?\", bridge=~\"$bridge\"}[$__range]))", "legendFormat": "requests", "refId": "A" }]
+    },
+    {
+      "id": 32,
+      "type": "stat",
+      "title": "Requests saved",
+      "description": "Number of Hue requests avoided. A bundle of N grouped-light requests contributes N-1 saved requests.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "editorMode": "code", "expr": "sum(increase({__name__=~\"gateway_hue_group_requests_saved(_total)?\", bridge=~\"$bridge\"}[$__range]))", "legendFormat": "requests saved", "refId": "A" }]
+    },
+    {
+      "id": 33,
+      "type": "stat",
+      "title": "Request reduction",
+      "description": "Percent reduction for optimized bundles, calculated as saved requests divided by represented individual requests.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "editorMode": "code", "expr": "100 * sum(increase({__name__=~\"gateway_hue_group_requests_saved(_total)?\", bridge=~\"$bridge\"}[$__range])) / clamp_min(sum(increase({__name__=~\"gateway_hue_group_requests(_total)?\", bridge=~\"$bridge\"}[$__range])), 1)", "legendFormat": "reduction", "refId": "A" }]
+    },
+    {
       "id": 6,
       "type": "row",
       "title": "Irrigation & weather",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
       "panels": []
     },
     {
@@ -115,7 +167,7 @@
       "title": "Latest weather age",
       "description": "Age in seconds of the latest persisted mapped weather observation. Alert if it exceeds the expected five-minute sample interval by an appropriate margin.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 16 },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 21 },
       "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 600 }, { "color": "red", "value": 1800 }] }, "color": { "mode": "thresholds" } }, "overrides": [] },
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_weather_latest_age(_seconds)?\"}", "legendFormat": "age", "refId": "A" }]
@@ -125,7 +177,7 @@
       "type": "stat",
       "title": "Stored weather observations",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 16 },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 21 },
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "irrigation_weather_observations_stored", "legendFormat": "observations", "refId": "A" }]
@@ -135,7 +187,7 @@
       "type": "stat",
       "title": "Weather history span",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 16 },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 21 },
       "fieldConfig": { "defaults": { "unit": "d", "decimals": 1 }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_weather_history_span(_seconds)?\"} / 86400", "legendFormat": "days", "refId": "A" }]
@@ -146,7 +198,7 @@
       "title": "Irrigation recommendation",
       "description": "1 means at least one zone has a positive recommended runtime; 0 means no current recommendation.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 16 },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 21 },
       "fieldConfig": { "defaults": { "unit": "bool", "mappings": [{ "options": { "0": { "text": "NO WATERING" }, "1": { "text": "WATERING NEEDED" } }, "type": "value" }], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }, "color": { "mode": "thresholds" } }, "overrides": [] },
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_decision_required\"}", "legendFormat": "recommendation", "refId": "A" }]
@@ -157,7 +209,7 @@
       "title": "Weather complete / forecast available",
       "description": "Two independent readiness signals from the latest irrigation calculation.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 16 },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 21 },
       "fieldConfig": { "defaults": { "unit": "bool", "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [
@@ -170,7 +222,7 @@
       "type": "stat",
       "title": "Completed irrigation runs (selected range)",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 16 },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 21 },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "sum(increase(irrigation_runs_completed[$__range]))", "legendFormat": "runs", "refId": "A" }]
@@ -181,7 +233,7 @@
       "title": "Weather observation interval (p50 / p95)",
       "description": "Intervals between persisted combined weather snapshots. The scheduled commit cadence is five minutes; stale values are reused when Loxone does not emit a change.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
       "targets": [
@@ -196,7 +248,7 @@
       "title": "Irrigation runs & applied water",
       "description": "Run count rate and distribution of estimated applied millimeters. Water applied is calculated from runtime and configured application rate, not measured flow.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [{ "matcher": { "id": "byRegexp", "options": "water applied.*" }, "properties": [{ "id": "unit", "value": "mm" }] }, { "matcher": { "id": "byRegexp", "options": "completed runs.*" }, "properties": [{ "id": "unit", "value": "ops" }] }] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
       "targets": [
@@ -211,7 +263,7 @@
       "title": "Lawn Dry state & surface wetness",
       "description": "Current Lawn Dry boolean and estimated surface wetness. Freshness, rain, active lawn irrigation, and heavy-rain lockout are shown as separate series.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 },
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "last" } }, "overrides": [{ "matcher": { "id": "byRegexp", "options": "surface wetness.*" }, "properties": [{ "id": "unit", "value": "mm" }] }] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
       "targets": [
@@ -229,7 +281,7 @@
       "title": "Weather history & decision freshness",
       "description": "Retained observation count, history span, and age of the latest irrigation calculation. State gauges change when the service recalculates or processes new stored data.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "last" } }, "overrides": [{ "matcher": { "id": "byRegexp", "options": "history span.*" }, "properties": [{ "id": "unit", "value": "d" }] }, { "matcher": { "id": "byRegexp", "options": "age.*" }, "properties": [{ "id": "unit", "value": "s" }] }] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
       "targets": [
@@ -243,7 +295,7 @@
       "type": "row",
       "title": "Latest persisted weather readings",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 },
       "panels": []
     },
     {
@@ -251,7 +303,7 @@
       "type": "stat",
       "title": "Temperature",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 37 },
+      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 42 },
       "fieldConfig": { "defaults": { "unit": "celsius", "decimals": 1, "color": { "mode": "palette-classic" } }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_weather_observed_temperature(_.*)?\"}", "legendFormat": "temperature", "refId": "A" }]
@@ -261,7 +313,7 @@
       "type": "stat",
       "title": "Humidity",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 3, "x": 3, "y": 37 },
+      "gridPos": { "h": 4, "w": 3, "x": 3, "y": 42 },
       "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1 }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_weather_observed_humidity(_.*)?\"}", "legendFormat": "humidity", "refId": "A" }]
@@ -271,7 +323,7 @@
       "type": "stat",
       "title": "Pressure",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 3, "x": 6, "y": 37 },
+      "gridPos": { "h": 4, "w": 3, "x": 6, "y": 42 },
       "fieldConfig": { "defaults": { "unit": "pressurehpa", "decimals": 1 }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_weather_observed_pressure(_.*)?\"}", "legendFormat": "pressure", "refId": "A" }]
@@ -281,7 +333,7 @@
       "type": "stat",
       "title": "Wind",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 3, "x": 9, "y": 37 },
+      "gridPos": { "h": 4, "w": 3, "x": 9, "y": 42 },
       "fieldConfig": { "defaults": { "unit": "velocitykmh", "decimals": 1 }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_weather_observed_wind_speed(_.*)?\"}", "legendFormat": "wind", "refId": "A" }]
@@ -292,7 +344,7 @@
       "title": "Rain · last 24 h",
       "description": "Observed rainfall calculated from the cumulative sensor counter, including counter resets.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 3, "x": 12, "y": 37 },
+      "gridPos": { "h": 4, "w": 3, "x": 12, "y": 42 },
       "fieldConfig": { "defaults": { "unit": "lengthmm", "decimals": 2 }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_decision_rain_observed_24h(_.*)?\"}", "legendFormat": "rain 24h", "refId": "A" }]
@@ -303,7 +355,7 @@
       "title": "Rain counter",
       "description": "Latest cumulative rainfall sensor reading; this is not the rain amount for the selected dashboard time range.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 37 },
+      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 42 },
       "fieldConfig": { "defaults": { "unit": "lengthmm", "decimals": 2 }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_weather_observed_rainfall_counter(_.*)?\"}", "legendFormat": "counter", "refId": "A" }]
@@ -313,7 +365,7 @@
       "type": "stat",
       "title": "Light",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 3, "x": 18, "y": 37 },
+      "gridPos": { "h": 4, "w": 3, "x": 18, "y": 42 },
       "fieldConfig": { "defaults": { "unit": "lux", "decimals": 0 }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_weather_observed_light(_.*)?\"}", "legendFormat": "light", "refId": "A" }]
@@ -323,7 +375,7 @@
       "type": "stat",
       "title": "Observed ET₀ · 24 h",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 37 },
+      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 42 },
       "fieldConfig": { "defaults": { "unit": "lengthmm", "decimals": 2 }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_decision_et0_observed_24h(_.*)?\"}", "legendFormat": "observed ET₀", "refId": "A" }]
@@ -334,7 +386,7 @@
       "title": "Observed temperature & humidity",
       "description": "Latest persisted sensor readings over time; values update at the combined weather sample cadence.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 41 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 46 },
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [{ "matcher": { "id": "byRegexp", "options": "temperature.*" }, "properties": [{ "id": "unit", "value": "celsius" }] }, { "matcher": { "id": "byRegexp", "options": "humidity.*" }, "properties": [{ "id": "unit", "value": "percent" }] }] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
       "targets": [
@@ -348,7 +400,7 @@
       "title": "Observed wind, light & rainfall",
       "description": "Wind and light are latest persisted sensor points; rain series show rolling 24-hour observed total and cumulative sensor counter.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 41 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 46 },
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [{ "matcher": { "id": "byRegexp", "options": "wind.*" }, "properties": [{ "id": "unit", "value": "velocitykmh" }] }, { "matcher": { "id": "byRegexp", "options": "light.*" }, "properties": [{ "id": "unit", "value": "lux" }] }, { "matcher": { "id": "byRegexp", "options": "rain.*" }, "properties": [{ "id": "unit", "value": "lengthmm" }] }] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
       "targets": [
@@ -364,7 +416,7 @@
       "title": "Observed pressure",
       "description": "Pressure from the latest persisted weather observations, shown over time in hPa.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 41 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 46 },
       "fieldConfig": { "defaults": { "unit": "pressurehpa", "decimals": 1, "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single" } },
       "targets": [{ "editorMode": "code", "expr": "{__name__=~\"irrigation_weather_observed_pressure(_.*)?\"}", "legendFormat": "pressure hPa", "refId": "A" }]
