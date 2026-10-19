@@ -99,4 +99,3 @@ public sealed record SafeGatewaySettings(
 public sealed record SafeLoxoneSettings(string Id, string Name, string Host, int Port, bool UseTls, string CertificateAuthorityPem, string Username, bool HasPassword);
 public sealed record SafeHueSettings(string Id, string Name, string Host, bool HasApplicationKey);
 public sealed record SafeTuyaDeviceSettings(string Id, string Name, string DeviceId, string IP, string Version, bool HasLocalKey);
-
