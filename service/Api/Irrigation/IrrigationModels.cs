@@ -143,7 +143,10 @@ public sealed record IrrigationStoredData(
     IReadOnlyDictionary<string, double> BalanceDeficitMm,
     DateOnly? LastBalancedLocalDate,
     IReadOnlyList<IrrigationRun> IrrigationRuns,
-    int TotalObservationCount);
+    int TotalObservationCount,
+    bool StateAvailable = true,
+    string? StateError = null,
+    string? RecoveryBackupFile = null);
 
 public sealed record IrrigationDashboardSnapshot(
     IrrigationConfiguration Configuration,
@@ -154,6 +157,7 @@ public sealed record IrrigationDashboardSnapshot(
 
 internal sealed class IrrigationState
 {
+    public int SchemaVersion { get; set; } = 1;
     public List<WeatherObservation> Observations { get; set; } = [];
     public Dictionary<string, double> BalanceDeficitMm { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public DateOnly? LastBalancedLocalDate { get; set; }

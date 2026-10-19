@@ -7,11 +7,15 @@ namespace loxone.smart.gateway.Api.Irrigation;
 
 public sealed class IrrigationService
 {
+    private const int CurrentStateSchemaVersion = 1;
     private IrrigationConfiguration _options;
     private readonly OpenMeteoForecastClient _forecast;
     private readonly IrrigationMetrics _metrics;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private IrrigationState _state;
+    private bool _stateAvailable = true;
+    private string? _stateLoadError;
+    private string? _recoveryBackupFile;
     private ForecastSummary? _cachedForecast;
     private bool _forecastAvailable;
     private DateTimeOffset _forecastRefreshAfter;
@@ -24,13 +28,15 @@ public sealed class IrrigationService
         _metrics = metrics ?? new IrrigationMetrics();
         _state = LoadState();
 
-        foreach (var group in GetConfiguredGroups())
-            _state.BalanceDeficitMm.TryAdd(group.Key, 0);
+        if (_stateAvailable)
+            foreach (var group in GetConfiguredGroups())
+                _state.BalanceDeficitMm.TryAdd(group.Key, 0);
 
         CleanupIrrigationRuns(DateTimeOffset.UtcNow);
         WarnAboutInconsistentBalanceGroups();
         _metrics.UpdateStoredData(new IrrigationStoredData(_state.Observations, _state.BalanceDeficitMm,
-            _state.LastBalancedLocalDate, _state.IrrigationRuns, _state.Observations.Count));
+            _state.LastBalancedLocalDate, _state.IrrigationRuns, _state.Observations.Count,
+            _stateAvailable, _stateLoadError, _recoveryBackupFile));
     }
 
     public void UpdateConfiguration(IrrigationConfiguration configuration) =>
@@ -54,9 +60,11 @@ public sealed class IrrigationService
                 new Dictionary<string, double>(_state.BalanceDeficitMm, StringComparer.OrdinalIgnoreCase),
                 _state.LastBalancedLocalDate,
                 runLimit <= 0 ? runs : runs.Take(runLimit).ToList(),
-                observations.Count);
+                observations.Count,
+                _stateAvailable, _stateLoadError, _recoveryBackupFile);
             _metrics.UpdateStoredData(new IrrigationStoredData(_state.Observations, _state.BalanceDeficitMm,
-                _state.LastBalancedLocalDate, _state.IrrigationRuns, _state.Observations.Count));
+                _state.LastBalancedLocalDate, _state.IrrigationRuns, _state.Observations.Count,
+                _stateAvailable, _stateLoadError, _recoveryBackupFile));
             return stored;
         }
         finally
@@ -73,6 +81,11 @@ public sealed class IrrigationService
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            if (!_stateAvailable)
+            {
+                Log.Warning("Ignoring weather observation because irrigation state recovery is required");
+                return;
+            }
             var receivedAt = DateTimeOffset.UtcNow;
             var timestamp = observation.Timestamp ?? receivedAt;
             var options = Volatile.Read(ref _options);
@@ -95,7 +108,8 @@ public sealed class IrrigationService
             await PersistAsync(cancellationToken);
             _metrics.RecordObservation(timestamp, previousTimestamp == default ? null : previousTimestamp, _state.Observations.Count);
             _metrics.UpdateStoredData(new IrrigationStoredData(_state.Observations, _state.BalanceDeficitMm,
-                _state.LastBalancedLocalDate, _state.IrrigationRuns, _state.Observations.Count));
+                _state.LastBalancedLocalDate, _state.IrrigationRuns, _state.Observations.Count,
+                _stateAvailable, _stateLoadError, _recoveryBackupFile));
         }
         finally
         {
@@ -117,6 +131,7 @@ public sealed class IrrigationService
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            if (!_stateAvailable) return false;
             // Loxone/HTTP may retry. An event id is accepted only once for the 30-day history window.
             if (_state.IrrigationRuns.Any(x => string.Equals(x.EventId, eventId, StringComparison.OrdinalIgnoreCase)))
                 return true;
@@ -170,14 +185,18 @@ public sealed class IrrigationService
         var calculationTimer = Stopwatch.StartNew();
         List<WeatherObservation> observations;
         Dictionary<string, double> balances;
+        bool stateAvailable;
+        string? stateLoadError;
 
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            var changed = AccumulateCompletedDays(DateTimeOffset.UtcNow);
+            var changed = _stateAvailable && AccumulateCompletedDays(DateTimeOffset.UtcNow);
             if (changed) await PersistAsync(cancellationToken);
             observations = [.. _state.Observations];
             balances = new Dictionary<string, double>(_state.BalanceDeficitMm, StringComparer.OrdinalIgnoreCase);
+            stateAvailable = _stateAvailable;
+            stateLoadError = _stateLoadError;
         }
         finally
         {
@@ -186,6 +205,18 @@ public sealed class IrrigationService
 
         var options = Volatile.Read(ref _options);
         var now = DateTimeOffset.UtcNow;
+        if (!stateAvailable)
+        {
+            var reason = $"Irrigation state could not be loaded; automatic watering is blocked until state is explicitly reset. {stateLoadError}";
+            var blockedZones = options.Zones.Select(zone => new IrrigationZoneResult(
+                zone.Id, ResolveBalanceGroup(zone), 0, 0, 0, 0,
+                options.IrrigationTriggerMm, 0, 0, false, false, reason)).ToList();
+            var blocked = new IrrigationResult(false, false, 0, 0, 0, 0, 0, 0, blockedZones,
+                now, 0, false, reason);
+            calculationTimer.Stop();
+            _metrics.RecordDecision(blocked, calculationTimer.Elapsed.TotalMilliseconds);
+            return blocked;
+        }
         observations = observations
             .Where(x => x.Timestamp is not null && x.Timestamp <= now.AddMinutes(Math.Max(0, options.MaximumTimestampSkewMinutes)))
             .OrderBy(x => x.Timestamp)
@@ -482,23 +513,93 @@ public sealed class IrrigationService
         try
         {
             if (!File.Exists(stateFile)) return new IrrigationState();
-            return JsonSerializer.Deserialize<IrrigationState>(File.ReadAllText(stateFile)) ?? new IrrigationState();
+            var json = File.ReadAllText(stateFile);
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !TryGetProperty(root, "Observations", out _) ||
+                !TryGetProperty(root, "BalanceDeficitMm", out _) ||
+                !TryGetProperty(root, "IrrigationRuns", out _))
+                throw new JsonException("Irrigation state is missing one or more required collections.");
+            if (TryGetProperty(root, "SchemaVersion", out var version) &&
+                (version.ValueKind != JsonValueKind.Number || version.GetInt32() != CurrentStateSchemaVersion))
+                throw new JsonException($"Unsupported irrigation state schema version '{version}'.");
+
+            var state = JsonSerializer.Deserialize<IrrigationState>(json) ??
+                        throw new JsonException("Irrigation state deserialized to null.");
+            if (state.Observations is null || state.BalanceDeficitMm is null || state.IrrigationRuns is null ||
+                state.BalanceDeficitMm.Values.Any(x => !double.IsFinite(x) || x < 0))
+                throw new JsonException("Irrigation state contains invalid collections or balance values.");
+            state.SchemaVersion = CurrentStateSchemaVersion;
+            return state;
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Unable to load irrigation state from {file}", stateFile);
+            _stateAvailable = false;
+            _stateLoadError = ex.Message;
+            if (File.Exists(stateFile))
+            {
+                _recoveryBackupFile = $"{stateFile}.corrupt-{DateTimeOffset.UtcNow:yyyyMMddTHHmmssfffZ}";
+                try { File.Copy(stateFile, _recoveryBackupFile, overwrite: false); }
+                catch (Exception backupError)
+                {
+                    Log.Error(backupError, "Unable to preserve a backup of invalid irrigation state at {file}", stateFile);
+                    _recoveryBackupFile = null;
+                }
+            }
+            Log.Error(ex, "Irrigation state at {file} is invalid; automatic watering is blocked until explicit recovery", stateFile);
             return new IrrigationState();
         }
     }
 
     private async Task PersistAsync(CancellationToken cancellationToken)
     {
+        if (!_stateAvailable)
+            throw new InvalidOperationException("Irrigation state recovery is required before state can be persisted.");
         var stateFile = Volatile.Read(ref _options).StateFile;
         var directory = Path.GetDirectoryName(stateFile);
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
         var temp = stateFile + ".tmp";
+        _state.SchemaVersion = CurrentStateSchemaVersion;
         await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(_state), cancellationToken);
         File.Move(temp, stateFile, true);
+    }
+
+    public async Task ResetStateAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            _state = new IrrigationState();
+            foreach (var group in GetConfiguredGroups())
+                _state.BalanceDeficitMm.TryAdd(group.Key, 0);
+            _stateAvailable = true;
+            _stateLoadError = null;
+            await PersistAsync(cancellationToken);
+            _metrics.UpdateStoredData(new IrrigationStoredData(_state.Observations, _state.BalanceDeficitMm,
+                _state.LastBalancedLocalDate, _state.IrrigationRuns, _state.Observations.Count));
+        }
+        catch
+        {
+            _stateAvailable = false;
+            throw;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private static bool TryGetProperty(JsonElement element, string name, out JsonElement value)
+    {
+        foreach (var property in element.EnumerateObject())
+            if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        value = default;
+        return false;
     }
 
     private static IrrigationConfiguration CloneConfiguration(IrrigationConfiguration value) =>

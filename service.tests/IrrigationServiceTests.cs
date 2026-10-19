@@ -151,6 +151,45 @@ public sealed class IrrigationServiceTests
         }
     }
 
+    [Fact]
+    public async Task CorruptState_IsPreservedAndBlocksWateringUntilExplicitReset()
+    {
+        const string invalidJson = "{ not valid json";
+        var stateFile = TempState(invalidJson);
+        try
+        {
+            var service = CreateService(stateFile, new Dictionary<string, string?>
+            {
+                ["Api:IrrigationConfiguration:Zones:0:Id"] = "V1",
+                ["Api:IrrigationConfiguration:Zones:0:ApplicationRateMmPerHour"] = "12"
+            });
+
+            var stored = await service.GetStoredDataAsync(CancellationToken.None);
+            Assert.False(stored.StateAvailable);
+            Assert.NotNull(stored.StateError);
+            Assert.NotNull(stored.RecoveryBackupFile);
+            Assert.Equal(invalidJson, await File.ReadAllTextAsync(stateFile));
+            Assert.Equal(invalidJson, await File.ReadAllTextAsync(stored.RecoveryBackupFile!));
+
+            var blocked = await service.CalculateAsync(CancellationToken.None);
+            Assert.False(blocked.Irrigate);
+            Assert.False(blocked.LocalDataComplete);
+            Assert.All(blocked.Zones, zone => Assert.Equal(0, zone.RuntimeSeconds));
+            Assert.Contains("reset", blocked.DecisionSummary, StringComparison.OrdinalIgnoreCase);
+
+            await service.ResetStateAsync(CancellationToken.None);
+            stored = await service.GetStoredDataAsync(CancellationToken.None);
+            Assert.True(stored.StateAvailable);
+            Assert.Equal(0, stored.BalanceDeficitMm["V1"]);
+            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(stateFile));
+            Assert.Equal(1, document.RootElement.GetProperty("SchemaVersion").GetInt32());
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(stateFile)!, recursive: true);
+        }
+    }
+
     private static WeatherObservation Obs(double rain, DateTimeOffset timestamp) =>
         new(20, 50, 1000, 5, 10000, rain, timestamp);
 
