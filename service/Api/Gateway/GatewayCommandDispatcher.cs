@@ -61,7 +61,7 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
         }
     }
 
-    private static IReadOnlyList<GatewayCommand> OptimizeHueBatch(IReadOnlyList<DeviceMapping> mappings, string sourceValue,
+    private IReadOnlyList<GatewayCommand> OptimizeHueBatch(IReadOnlyList<DeviceMapping> mappings, string sourceValue,
         DateTimeOffset receivedAt, GatewaySettings settings)
     {
         var commands = mappings.Select(mapping => new GatewayCommand(mapping, sourceValue, receivedAt)).ToArray();
@@ -127,6 +127,8 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
                 }
                 Log.Information("Combining {MappingCount} Hue grouped-light updates into one request to group {GroupId} because the commands match and coverage is exact",
                     relevant.Length, candidate.Id);
+                var bridgeName = settings.HueBridges.FirstOrDefault(bridge => bridge.Id.Equals(bridgeGroup.Key, StringComparison.OrdinalIgnoreCase))?.Name;
+                _metrics.RecordHueGroupOptimization(relevant.Length, bridgeName);
             }
         }
 
