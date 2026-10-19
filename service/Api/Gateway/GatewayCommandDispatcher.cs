@@ -14,12 +14,17 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
 {
     private static readonly TimeSpan HueLightInterval = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan HueGroupedLightInterval = TimeSpan.FromMilliseconds(1000);
+    // Loxone publishes a snapshot as separate state events. Give related grouped-light
+    // updates a brief window to arrive before evaluating exact-coverage optimizations.
+    private static readonly TimeSpan HueGroupedLightBatchWindow = TimeSpan.FromMilliseconds(200);
     private readonly GatewayStateStore _store;
     private readonly DeviceIntegrations _devices;
     private readonly GatewayMetrics _metrics;
     private readonly CancellationTokenSource _stop;
     private readonly object _queueSync = new();
     private readonly Dictionary<string, LatestValueCommandQueue<GatewayCommand>> _queues = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<GatewayCommand>> _groupedLightBatches = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _scheduledGroupedLightBatches = new(StringComparer.OrdinalIgnoreCase);
 
     public GatewayCommandDispatcher(GatewayStateStore store, DeviceIntegrations devices, GatewayMetrics metrics, CancellationToken cancellationToken)
     {
@@ -38,34 +43,81 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
         if (mappings.Count == 0) return;
         var snapshot = _store.GetSnapshot().Settings;
         var hueMappings = mappings.Where(mapping => mapping.TargetType.Equals("hue", StringComparison.OrdinalIgnoreCase)).ToArray();
-        foreach (var command in OptimizeHueBatch(hueMappings, sourceValue, receivedAt, snapshot))
+        var groupedLightCommands = new List<GatewayCommand>();
+        foreach (var mapping in hueMappings)
         {
-            var mapping = command.Mapping;
-            var resourceType = mapping.HueResourceType.Equals("grouped_light", StringComparison.OrdinalIgnoreCase)
-                ? "grouped_light"
-                : "light";
-            var queueKey = $"hue|{mapping.TargetConnectionId}|{resourceType}";
-            var targetKey = $"{resourceType}|{mapping.TargetId}";
-            var pacing = resourceType == "grouped_light" ? HueGroupedLightInterval : HueLightInterval;
-            var bridgeName = snapshot.HueBridges
-                .FirstOrDefault(x => x.Id.Equals(mapping.TargetConnectionId, StringComparison.OrdinalIgnoreCase))?.Name;
-            GetQueue(queueKey, pacing, "hue", resourceType, bridgeName).Enqueue(targetKey, command);
+            var command = new GatewayCommand(mapping, sourceValue, receivedAt);
+            var resourceType = mapping.HueResourceType.Equals("grouped_light", StringComparison.OrdinalIgnoreCase) ? "grouped_light" : "light";
+            if (resourceType == "grouped_light")
+            {
+                groupedLightCommands.Add(command);
+                continue;
+            }
+            EnqueueHueCommand(command, resourceType, snapshot);
+        }
+
+        foreach (var bridgeBatch in groupedLightCommands.GroupBy(command => command.Mapping.TargetConnectionId, StringComparer.OrdinalIgnoreCase))
+        {
+            var bridgeId = bridgeBatch.Key;
+            lock (_queueSync)
+            {
+                if (!_groupedLightBatches.TryGetValue(bridgeId, out var batch))
+                    _groupedLightBatches[bridgeId] = batch = [];
+                batch.AddRange(bridgeBatch);
+                if (_scheduledGroupedLightBatches.Add(bridgeId))
+                    _ = FlushGroupedLightBatchAfterDelayAsync(bridgeId);
+            }
         }
 
         foreach (var mapping in mappings.Where(mapping => !mapping.TargetType.Equals("hue", StringComparison.OrdinalIgnoreCase)))
         {
             var command = new GatewayCommand(mapping, sourceValue, receivedAt);
-        // Tuya uses one independent serialized LAN command queue. DP values to the same device
-        // coalesce, while Hue work can proceed concurrently without waiting for Tuya networking.
+            // Tuya uses one independent serialized LAN command queue. DP values to the same device
+            // coalesce, while Hue work can proceed concurrently without waiting for Tuya networking.
             GetQueue("tuya", TimeSpan.Zero, "tuya", "device").Enqueue($"{mapping.TargetConnectionId}|{mapping.TuyaDp}", command);
         }
     }
 
-    private IReadOnlyList<GatewayCommand> OptimizeHueBatch(IReadOnlyList<DeviceMapping> mappings, string sourceValue,
-        DateTimeOffset receivedAt, GatewaySettings settings)
+    private async Task FlushGroupedLightBatchAfterDelayAsync(string bridgeId)
     {
-        var commands = mappings.Select(mapping => new GatewayCommand(mapping, sourceValue, receivedAt)).ToArray();
-        if (commands.Length < 2) return commands;
+        try
+        {
+            await Task.Delay(HueGroupedLightBatchWindow, _stop.Token);
+            List<GatewayCommand> batch;
+            lock (_queueSync)
+            {
+                _scheduledGroupedLightBatches.Remove(bridgeId);
+                if (!_groupedLightBatches.Remove(bridgeId, out batch!)) return;
+            }
+
+            // Keep only the latest value for a target inside the collection window.
+            var latestByTarget = batch
+                .GroupBy(command => command.Mapping.TargetId, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.Last())
+                .ToArray();
+            Log.Debug("Collected {CommandCount} grouped-light updates across state events for Hue bridge {BridgeId}; evaluating group coverage",
+                latestByTarget.Length, bridgeId);
+            var settings = _store.GetSnapshot().Settings;
+            foreach (var command in OptimizeHueBatch(latestByTarget, settings))
+                EnqueueHueCommand(command, "grouped_light", settings);
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+    }
+
+    private void EnqueueHueCommand(GatewayCommand command, string resourceType, GatewaySettings snapshot)
+    {
+        var mapping = command.Mapping;
+        var queueKey = $"hue|{mapping.TargetConnectionId}|{resourceType}";
+        var targetKey = $"{resourceType}|{mapping.TargetId}";
+        var pacing = resourceType == "grouped_light" ? HueGroupedLightInterval : HueLightInterval;
+        var bridgeName = snapshot.HueBridges
+            .FirstOrDefault(x => x.Id.Equals(mapping.TargetConnectionId, StringComparison.OrdinalIgnoreCase))?.Name;
+        GetQueue(queueKey, pacing, "hue", resourceType, bridgeName).Enqueue(targetKey, command);
+    }
+
+    private IReadOnlyList<GatewayCommand> OptimizeHueBatch(IReadOnlyList<GatewayCommand> commands, GatewaySettings settings)
+    {
+        if (commands.Count < 2) return commands;
 
         var prepared = new List<(GatewayCommand Command, string Body, HashSet<string> Members)>();
         foreach (var command in commands)
@@ -74,7 +126,7 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
             if (!mapping.HueResourceType.Equals("grouped_light", StringComparison.OrdinalIgnoreCase)) continue;
             try
             {
-                using var converted = JsonDocument.Parse(MappingValueConverter.Convert(mapping, sourceValue).GetRawText());
+                using var converted = JsonDocument.Parse(MappingValueConverter.Convert(mapping, command.SourceValue).GetRawText());
                 if (!DeviceIntegrations.TryBuildHueCommandBody(mapping, converted.RootElement, out var body)) continue;
                 var catalog = settings.HueResourceCatalogs.GetValueOrDefault(mapping.TargetConnectionId);
                 var resource = catalog?.Resources.FirstOrDefault(resource => resource.Type == "grouped_light" && resource.Id.Equals(mapping.TargetId, StringComparison.OrdinalIgnoreCase));
@@ -123,7 +175,7 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
                 foreach (var item in relevant)
                 {
                     used.Add(item.Command);
-                    replacements[item.Command] = new GatewayCommand(aggregateMapping, sourceValue, receivedAt);
+                    replacements[item.Command] = new GatewayCommand(aggregateMapping, item.Command.SourceValue, item.Command.ReceivedAt);
                 }
                 Log.Information("Combining {MappingCount} Hue grouped-light updates into one request to group {GroupId} because the commands match and coverage is exact",
                     relevant.Length, candidate.Id);
