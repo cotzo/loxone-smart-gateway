@@ -79,4 +79,3 @@ Requires the .NET 10 SDK. Set `Gateway__AdminPassword` to at least 16 characters
 ```bash
 dotnet run --project service
 ```
-
