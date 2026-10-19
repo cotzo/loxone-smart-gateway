@@ -260,4 +260,3 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
         Version = device.Version
     };
 }
-
