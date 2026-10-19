@@ -1,4 +1,6 @@
 using loxone.smart.gateway.Api.Gateway;
+using System.Diagnostics.Metrics;
+using System.Collections.Concurrent;
 using Xunit;
 
 namespace service.tests;
@@ -83,6 +85,49 @@ public sealed class LatestValueCommandQueueTests
 
         lock (requestedDelays)
             Assert.Contains(requestedDelays, delay => delay.TotalMilliseconds >= intervalMilliseconds - 10);
+    }
+
+    [Fact]
+    public async Task ExposesOldestPendingCommandAgeForItsQueueLane()
+    {
+        using var metrics = new GatewayMetrics();
+        using var listener = new MeterListener();
+        var observedAges = new ConcurrentQueue<double>();
+        listener.InstrumentPublished = (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == GatewayMetrics.MeterName)
+                meterListener.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((instrument, measurement, _, _) =>
+        {
+            if (instrument.Name == "gateway.provider.queue.oldest_pending.age")
+                observedAges.Enqueue(measurement);
+        });
+        listener.Start();
+
+        var firstStarted = NewSignal();
+        var releaseFirst = NewSignal();
+        var secondSent = NewSignal();
+        await using var queue = new LatestValueCommandQueue<int>(async (value, _) =>
+        {
+            if (value == 1)
+            {
+                firstStarted.TrySetResult();
+                await releaseFirst.Task;
+            }
+            else secondSent.TrySetResult();
+        }, TimeSpan.Zero, CancellationToken.None, "hue|bridge-id|light", metrics: metrics,
+            provider: "hue", resourceType: "light", bridge: "Living Room Bridge");
+
+        queue.Enqueue("lamp-1", 1);
+        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        queue.Enqueue("lamp-2", 2);
+        await Task.Delay(30);
+        listener.RecordObservableInstruments();
+
+        Assert.Contains(observedAges, age => age >= 0.02);
+        releaseFirst.TrySetResult();
+        await secondSent.Task.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Fact]
