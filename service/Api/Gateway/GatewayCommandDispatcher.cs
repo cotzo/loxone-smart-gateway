@@ -103,7 +103,7 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
                 }
 
                 _metrics.RecordCommand("hue", resourceType, "success", bridgeName);
-                _store.ReportHueStatus(selectedBridge.Id, "Connected; command accepted");
+                _store.ReportHueStatus(selectedBridge.Id, "Bridge reachable; command accepted (device state unverified)");
                 Log.Information("Mapping {Mapping} command accepted by Hue resource {TargetId}; event-to-acceptance delay {EventToAcceptanceMs:F1} ms",
                     mapping.Name, mapping.TargetId, (DateTimeOffset.UtcNow - command.ReceivedAt).TotalMilliseconds);
             }
@@ -113,7 +113,7 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
                 var device = settings.TuyaDevices.First(x => x.Id == mapping.TargetConnectionId);
                 await _devices.SendTuyaAsync(device, mapping.TuyaDp!.Value, convertedValue, cancellationToken);
                 _metrics.RecordCommand("tuya", "device", "success");
-                _store.ReportTuyaStatus(device.Id, "Connected; last command dispatched (acknowledgement best-effort)");
+                _store.ReportTuyaStatus(device.Id, "Command dispatched; acknowledgement best-effort (device state unverified)");
                 Log.Information("Mapping {Mapping} Tuya command dispatched to device {Device} DP {Dp}; acknowledgement is best-effort; event-to-dispatch delay {EventToDispatchMs:F1} ms",
                     mapping.Name, device.Name, mapping.TuyaDp, (DateTimeOffset.UtcNow - command.ReceivedAt).TotalMilliseconds);
             }
