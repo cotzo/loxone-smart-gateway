@@ -84,7 +84,7 @@ public sealed record LoxoneStateOption(string Uuid, string Control, string Type,
 public sealed record LoxoneStateCatalog(DateTimeOffset DiscoveredAt, IReadOnlyList<LoxoneStateOption> States);
 public sealed record IntegrationStatus(IReadOnlyList<ConnectionStatus> Loxone, IReadOnlyList<ConnectionStatus> Hue, IReadOnlyList<ConnectionStatus> Tuya, int MappingCount, DateTimeOffset? LastSync);
 public sealed record ConnectionStatus(string Id, string Name, string Status);
-public sealed record HueResource(string Id, string Type, string Name, string BridgeId, string? RoomId = null, string? RoomName = null, string? ZoneId = null, string? ZoneName = null);
+public sealed record HueResource(string Id, string Type, string Name, string BridgeId, string? RoomId = null, string? RoomName = null, string? ZoneId = null, string? ZoneName = null, IReadOnlyList<string>? MemberIds = null);
 public sealed record HueResourceCatalog(DateTimeOffset DiscoveredAt, IReadOnlyList<HueResource> Resources);
 public sealed record TuyaDataPoint(string Id, string JsonType, string? Value);
 
@@ -99,3 +99,4 @@ public sealed record SafeGatewaySettings(
 public sealed record SafeLoxoneSettings(string Id, string Name, string Host, int Port, bool UseTls, string CertificateAuthorityPem, string Username, bool HasPassword);
 public sealed record SafeHueSettings(string Id, string Name, string Host, bool HasApplicationKey);
 public sealed record SafeTuyaDeviceSettings(string Id, string Name, string DeviceId, string IP, string Version, bool HasLocalKey);
+
