@@ -238,4 +238,3 @@ internal sealed class GatewayCommandDispatcher : IAsyncDisposable
         _stop.Dispose();
     }
 }
-
