@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using loxone.smart.gateway.Api.Gateway;
 using loxone.smart.gateway.Api.PhilipsHue;
@@ -8,6 +9,23 @@ namespace service.tests;
 
 public sealed class HueDeviceIntegrationTests
 {
+    [Fact]
+    public async Task Discovered_room_light_uses_utf8_middle_dot_in_display_name()
+    {
+        var handler = new HueDiscoveryHandler();
+        var integrations = new DeviceIntegrations(new StubHttpClientFactory(handler));
+
+        var resources = await integrations.GetHueResourcesAsync(
+            new HueSettings { Id = "bridge", Host = "127.0.0.1" }, CancellationToken.None);
+
+        var light = Assert.Single(resources, resource => resource.Type == "light");
+        Assert.Equal("Lamp · Kitchen", light.Name);
+        Assert.DoesNotContain("Â·", light.Name, StringComparison.Ordinal);
+
+        var persisted = JsonSerializer.Deserialize<HueResource>(JsonSerializer.Serialize(light));
+        Assert.Equal("Lamp · Kitchen", persisted?.Name);
+    }
+
     [Theory]
     [InlineData(-1)]
     [InlineData(199999999)]
@@ -59,6 +77,26 @@ public sealed class HueDeviceIntegrationTests
         {
             RequestCount++;
             return Task.FromResult(Response);
+        }
+    }
+
+    private sealed class HueDiscoveryHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = request.RequestUri?.AbsolutePath switch
+            {
+                "/clip/v2/resource/room" => """{"data":[{"id":"room-1","metadata":{"name":"Kitchen"},"children":[{"rid":"group-1","rtype":"grouped_light"}]}]}""",
+                "/clip/v2/resource/zone" => """{"data":[]}""",
+                "/clip/v2/resource/device" => """{"data":[{"id":"device-1","services":[{"rid":"group-1","rtype":"grouped_light"}]}]}""",
+                "/clip/v2/resource/light" => """{"data":[{"id":"light-1","metadata":{"name":"Lamp"},"owner":{"rid":"device-1","rtype":"device"}}]}""",
+                "/clip/v2/resource/grouped_light" => """{"data":[]}""",
+                _ => "{}"
+            };
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            });
         }
     }
 }

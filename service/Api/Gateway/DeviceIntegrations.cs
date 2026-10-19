@@ -10,6 +10,8 @@ namespace loxone.smart.gateway.Api.Gateway;
 
 public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetrics? metrics = null)
 {
+    private const string RoomDisplaySeparator = "\u00B7";
+
     public async Task<IReadOnlyList<HueResource>> GetHueResourcesAsync(HueSettings bridge, CancellationToken cancellationToken)
     {
         using var client = CreateHueClient(bridge);
@@ -97,7 +99,7 @@ public sealed class DeviceIntegrations(IHttpClientFactory clients, GatewayMetric
                 if (type == "grouped_light" && (string.IsNullOrWhiteSpace(name) || Guid.TryParse(name, out _)))
                     name = room.Name ?? zone.Name ?? $"Hue group {groupedLightNumber}";
                 var displayName = name ?? id ?? string.Empty;
-                if (type == "light" && room.Name is not null) displayName = $"{displayName} · {room.Name}";
+                if (type == "light" && room.Name is not null) displayName = $"{displayName} {RoomDisplaySeparator} {room.Name}";
                 if (!string.IsNullOrWhiteSpace(id))
                 {
                     IReadOnlyList<string>? memberIds = null;
