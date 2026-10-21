@@ -101,6 +101,30 @@ builder.Services.AddSingleton<IrrigationLoxoneService>();
 builder.Services.AddSingleton<LawnDryService>();
 
 var app = builder.Build();
+var appJsInfo = app.Environment.WebRootFileProvider.GetFileInfo("js/app.js");
+if (!appJsInfo.Exists)
+    throw new InvalidOperationException("The web application JavaScript asset js/app.js was not found.");
+await using var appJsStream = appJsInfo.CreateReadStream();
+var appJsHash = Convert.ToHexString(await SHA256.HashDataAsync(appJsStream)).ToLowerInvariant();
+app.Use(async (context, next) =>
+{
+    if (HttpMethods.IsGet(context.Request.Method) &&
+        (context.Request.Path == "/" || context.Request.Path.Equals("/index.html", StringComparison.OrdinalIgnoreCase)))
+    {
+        var indexInfo = app.Environment.WebRootFileProvider.GetFileInfo("index.html");
+        if (indexInfo.Exists)
+        {
+            await using var indexStream = indexInfo.CreateReadStream();
+            using var reader = new StreamReader(indexStream);
+            var html = await reader.ReadToEndAsync(context.RequestAborted);
+            context.Response.ContentType = "text/html; charset=utf-8";
+            context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
+            await context.Response.WriteAsync(html.Replace("__APP_JS_HASH__", appJsHash, StringComparison.Ordinal), context.RequestAborted);
+            return;
+        }
+    }
+    await next();
+});
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.Use(async (context, next) =>
