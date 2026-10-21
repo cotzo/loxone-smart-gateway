@@ -13,7 +13,8 @@ public sealed class GatewayController(
     IrrigationService irrigation,
     IrrigationRunTracker irrigationRunTracker,
     LawnDryService lawnDryService,
-    IrrigationLoxoneService irrigationLoxone) : ControllerBase
+    IrrigationLoxoneService irrigationLoxone,
+    IrrigationDisableStateService irrigationDisableState) : ControllerBase
 {
     [HttpPost("login")]
     public IActionResult Login([FromBody] LoginRequest request, [FromServices] IConfiguration configuration)
@@ -171,12 +172,18 @@ public sealed class GatewayController(
         var stored = await irrigation.GetStoredDataAsync(cancellationToken);
         var activeZoneIds = await irrigationRunTracker.GetActiveZoneIdsAsync(cancellationToken);
         var lawnDry = await lawnDryService.GetStatusAsync(cancellationToken);
+        var configuration = store.GetSnapshot().Settings.Irrigation;
+        var month = stored.LastBalancedLocalDate?.Month ?? DateTimeOffset.UtcNow.Month;
+        var seasonalFactors = configuration.Zones.GroupBy(IrrigationService.ResolveBalanceGroup, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => IrrigationService.GetSeasonalCoefficient(configuration, group.Key, month), StringComparer.OrdinalIgnoreCase);
         return Ok(new IrrigationDashboardSnapshot(
-            store.GetSnapshot().Settings.Irrigation,
+            configuration,
             stored,
             activeZoneIds,
             decision,
-            lawnDry));
+            lawnDry,
+            irrigationDisableState.GetStatus(),
+            seasonalFactors));
     }
 
     [HttpPut("irrigation")]

@@ -54,4 +54,16 @@ public sealed class MowingWetnessServiceTests
 
         Assert.Equal(2.5, LawnDryService.RainForPeriod(observations, start, start.AddMinutes(4)), 6);
     }
+
+    [Fact]
+    public void DewRisk_BlocksNearSaturatedLowLightConditionsButNotBrightDaylight()
+    {
+        var dewyMorning = new WeatherObservation(14, 99, 962, 1, 500, 0);
+        var brightDay = new WeatherObservation(18, 96, 962, 1, 25000, 0);
+        var saturatedAir = new WeatherObservation(18, 99, 962, 1, 25000, 0);
+
+        Assert.True(LawnDryService.HasDewRisk(dewyMorning));
+        Assert.False(LawnDryService.HasDewRisk(brightDay));
+        Assert.True(LawnDryService.HasDewRisk(saturatedAir));
+    }
 }

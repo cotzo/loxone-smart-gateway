@@ -64,6 +64,99 @@ public sealed class IrrigationServiceTests
     }
 
     [Fact]
+    public void SeasonalCoefficient_UsesBalanceGroupMonthAndNeutralFallback()
+    {
+        var options = new IrrigationConfiguration
+        {
+            SeasonalCoefficientsByBalanceGroup = new Dictionary<string, double[]>
+            {
+                ["LawnEast"] = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 0.4, 0.2]
+            }
+        };
+
+        Assert.Equal(0.2, IrrigationService.GetSeasonalCoefficient(options, "lawneast", 1));
+        Assert.Equal(0.4, IrrigationService.GetSeasonalCoefficient(options, "LawnEast", 11));
+        Assert.Equal(1.0, IrrigationService.GetSeasonalCoefficient(options, "NewGroup", 7));
+        Assert.Equal(1.0, IrrigationService.GetSeasonalCoefficient(options, "LawnEast", 13));
+    }
+
+    [Fact]
+    public async Task CompletedDay_UsesItsLocalMonthCoefficientAcrossUtcMonthBoundary()
+    {
+        var start = DateTimeOffset.Parse("2026-09-30T21:05:00Z"); // 00:05 on Oct 1 in Bucharest.
+        var end = DateTimeOffset.Parse("2026-10-01T20:55:00Z");
+        var saved = JsonSerializer.Serialize(new
+        {
+            Observations = new[] { Obs(0, start), Obs(0, end) },
+            BalanceDeficitMm = new Dictionary<string, double> { ["Garden"] = 0 },
+            LastBalancedLocalDate = "2026-09-30",
+            IrrigationRuns = Array.Empty<object>()
+        });
+        var stateFile = TempState(saved);
+        try
+        {
+            var irrigation = CreateService(stateFile, new Dictionary<string, string?>());
+            var options = irrigation.GetConfigurationSnapshot();
+            options.TimeZoneId = "Europe/Bucharest";
+            options.Zones = [new IrrigationZoneConfiguration { Id = "Z1", BalanceGroup = "Garden" }];
+            var monthly = Enumerable.Repeat(1.0, 12).ToArray();
+            monthly[9] = 0; // October; September deliberately remains at 1.0.
+            options.SeasonalCoefficientsByBalanceGroup["Garden"] = monthly;
+            irrigation.UpdateConfiguration(options);
+            Assert.True(IrrigationService.CalculateEt0([Obs(0, start), Obs(0, end)], options) > 0);
+
+            await irrigation.AddObservationAsync(Obs(0, DateTimeOffset.UtcNow), CancellationToken.None);
+            var stored = await irrigation.GetStoredDataAsync(CancellationToken.None);
+            var todayLocal = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow,
+                TimeZoneInfo.FindSystemTimeZoneById("Europe/Bucharest")).DateTime);
+
+            Assert.Equal(0, stored.BalanceDeficitMm["Garden"], 8);
+            Assert.Equal(todayLocal.AddDays(-1), stored.LastBalancedLocalDate);
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(stateFile)!, recursive: true); }
+    }
+
+    [Fact]
+    public async Task IrrigationDisableInterlock_FailsClosedUntilValidStateAndAfterDisconnect()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Gateway:DataDirectory"] = directory
+            }).Build();
+            var store = new GatewayStateStore(configuration, new EphemeralDataProtectionProvider());
+            var settings = store.GetSnapshot().Settings;
+            settings.LoxoneServers.Add(new LoxoneSettings { Id = "mini", Name = "Mini", Host = "localhost", Port = 80, Username = "user", Password = "pass" });
+            settings.Irrigation.IrrigationDisabledState = new IrrigationLoxoneStateMapping { ServerId = "mini", StateUuid = "switch-uuid" };
+            await store.SaveAsync(settings, CancellationToken.None);
+
+            var interlock = new IrrigationDisableStateService(store);
+            Assert.True(interlock.GetStatus().Disabled);
+            interlock.ReportConnection("mini", true);
+            Assert.True(interlock.GetStatus().Disabled);
+            interlock.ObserveState("mini", "switch-uuid", "not-a-bool");
+            Assert.True(interlock.GetStatus().Disabled);
+            interlock.ObserveState("mini", "switch-uuid", "false");
+            Assert.False(interlock.GetStatus().Disabled);
+            interlock.ObserveState("mini", "switch-uuid", "true");
+            Assert.True(interlock.GetStatus().Disabled);
+            settings.Irrigation.IrrigationDisabledState.StateUuid = "replacement-switch";
+            await store.SaveAsync(settings, CancellationToken.None);
+            Assert.True(interlock.GetStatus().Disabled);
+            Assert.False(interlock.GetStatus().StateKnown);
+            interlock.ObserveState("mini", "replacement-switch", "off");
+            Assert.False(interlock.GetStatus().Disabled);
+            interlock.ReportConnection("mini", false);
+            Assert.True(interlock.GetStatus().Disabled);
+            Assert.False(interlock.GetStatus().StateKnown);
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
     public async Task AppliedEvent_IsIdempotent_AndSharedGroupUsesPhysicalValveRate()
     {
         var stateFile = TempState("{\"Observations\":[],\"BalanceDeficitMm\":{\"LawnEast\":10},\"IrrigationRuns\":[]}");

@@ -10,7 +10,8 @@ namespace loxone.smart.gateway.Api.Irrigation;
 public sealed class IrrigationDurationSyncService(
     GatewayStateStore store,
     IrrigationService irrigation,
-    LoxoneIntegration loxone) : BackgroundService
+    LoxoneIntegration loxone,
+    IrrigationDisableStateService disableState) : BackgroundService
 {
     private const string OffValue = "-1";
     private string? _lastAppliedSignature;
@@ -40,9 +41,10 @@ public sealed class IrrigationDurationSyncService(
         if (zones.Count == 0) return;
 
         var decision = await irrigation.CalculateAsync(cancellationToken);
+        var interlock = disableState.GetStatus();
         var results = decision.Zones.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
         var durations = zones.ToDictionary(zone => zone.LoxoneZoneId,
-            zone => decision.LocalDataComplete && results.TryGetValue(zone.Id, out var result) ? result.RuntimeSeconds : 0,
+            zone => decision.LocalDataComplete && !interlock.Disabled && results.TryGetValue(zone.Id, out var result) ? result.RuntimeSeconds : 0,
             StringComparer.OrdinalIgnoreCase);
         var server = settings.LoxoneServers.FirstOrDefault(x => x.Id.Equals(block.ServerId, StringComparison.OrdinalIgnoreCase));
         if (server is null)
@@ -87,9 +89,12 @@ public sealed class IrrigationDurationSyncService(
             throw new InvalidOperationException($"Could not read active/currentZone for irrigation block {block.Control}.");
         if (!IrrigationLoxoneService.IsInactiveForSync(activeRaw, currentRaw))
         {
-            Log.Information("Deferring recommended irrigation duration update for {Control}: block is active (active={Active}, currentZone={CurrentZone})", block.Control, activeRaw, currentRaw);
+            Log.Information("Deferring irrigation duration update for {Control}: block is active (active={Active}, currentZone={CurrentZone}); current cycle will not be interrupted, desired durations will be applied once idle (interlock={Interlock})", block.Control, activeRaw, currentRaw, interlock.Summary);
             return;
         }
+
+        if (interlock.Disabled)
+            Log.Information("Irrigation is disabled for {Control}; writing zero duration to every configured zone. Interlock: {Interlock}", block.Control, interlock.Summary);
 
         Log.Information("Sending irrigation durations for {Control} to Loxone: {Durations}", block.Control,
             string.Join(";", durations.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase).Select(x => $"{x.Key}={x.Value}")));

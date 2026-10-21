@@ -284,8 +284,11 @@ public sealed class IrrigationService
                 {
                     _state.BalanceDeficitMm.TryGetValue(group.Key, out var current);
                     var exposure = Math.Max(0, group.First().Exposure);
-                    var nextDeficit = Math.Max(0, current + et0 * exposure - effectiveRain);
+                    var coefficient = GetSeasonalCoefficient(_options, group.Key, next.Month);
+                    var nextDeficit = Math.Max(0, current + et0 * coefficient * exposure - effectiveRain);
                     _state.BalanceDeficitMm[group.Key] = Math.Min(Math.Max(0, _options.MaximumDeficitMm), nextDeficit);
+                    Log.Debug("Balanced irrigation group {BalanceGroup} for local date {LocalDate}: ET0={Et0Mm:F3} mm × seasonal factor {SeasonalFactor:F2} × exposure {Exposure:F2} − effective rain {EffectiveRainMm:F3} mm = stored deficit {StoredDeficitMm:F3} mm",
+                        group.Key, next, et0, coefficient, exposure, effectiveRain, _state.BalanceDeficitMm[group.Key]);
                 }
             }
             else
@@ -336,6 +339,14 @@ public sealed class IrrigationService
 
     internal static string ResolveBalanceGroup(IrrigationZoneConfiguration zone) =>
         string.IsNullOrWhiteSpace(zone.BalanceGroup) ? zone.Id : zone.BalanceGroup.Trim();
+
+    internal static double GetSeasonalCoefficient(IrrigationConfiguration options, string balanceGroup, int month)
+    {
+        if (month is < 1 or > 12 || options.SeasonalCoefficientsByBalanceGroup.FirstOrDefault(x => x.Key.Equals(balanceGroup, StringComparison.OrdinalIgnoreCase)).Value is not { Length: 12 } values)
+            return 1.0;
+        var value = values[month - 1];
+        return double.IsFinite(value) && value is >= 0 and <= 3 ? value : 1.0;
+    }
 
     private void WarnAboutInconsistentBalanceGroups()
     {

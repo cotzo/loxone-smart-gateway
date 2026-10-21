@@ -8,7 +8,8 @@ public sealed class IrrigationSignalSyncService(
     GatewayStateStore store,
     IrrigationService irrigation,
     LawnDryService lawnDryService,
-    LoxoneIntegration loxone) : BackgroundService
+    LoxoneIntegration loxone,
+    IrrigationDisableStateService disableState) : BackgroundService
 {
     private readonly Dictionary<string, string> _lastApplied = new(StringComparer.OrdinalIgnoreCase);
 
@@ -35,10 +36,11 @@ public sealed class IrrigationSignalSyncService(
         var lawnDryDecision = configuration.LawnDryTarget is null
             ? null
             : await lawnDryService.GetStatusAsync(cancellationToken);
+        var interlock = disableState.GetStatus();
 
         await SyncSignalAsync(settings, "Irrigation Required", "IrrigationRequired",
             configuration.IrrigationRequiredTarget,
-            irrigationDecision is not null && irrigationDecision.LocalDataComplete && irrigationDecision.Irrigate,
+            irrigationDecision is not null && irrigationDecision.LocalDataComplete && irrigationDecision.Irrigate && !interlock.Disabled,
             cancellationToken);
         await SyncSignalAsync(settings, "Lawn Dry", "LawnDry",
             configuration.LawnDryTarget,

@@ -242,6 +242,16 @@ public sealed class GatewayStateStore
             throw new ArgumentException("Irrigation latitude/longitude are outside their valid ranges.");
         if (irrigation.Zones.Any(x => string.IsNullOrWhiteSpace(x.Id) || x.Exposure < 0 || x.ApplicationRateMmPerHour <= 0))
             throw new ArgumentException("Every irrigation zone requires an ID, non-negative exposure, and positive application rate.");
+        foreach (var profile in irrigation.SeasonalCoefficientsByBalanceGroup)
+            if (string.IsNullOrWhiteSpace(profile.Key) || profile.Value is null || profile.Value.Length != 12 ||
+                profile.Value.Any(value => !double.IsFinite(value) || value is < 0 or > 3))
+                throw new ArgumentException("Each seasonal balance-group profile must contain 12 finite monthly coefficients between 0 and 3.");
+        if (irrigation.SeasonalCoefficientsByBalanceGroup.Keys.Distinct(StringComparer.OrdinalIgnoreCase).Count() != irrigation.SeasonalCoefficientsByBalanceGroup.Count)
+            throw new ArgumentException("Seasonal balance-group profile names must be unique, ignoring case.");
+        if (irrigation.IrrigationDisabledState is { } interlock &&
+            (string.IsNullOrWhiteSpace(interlock.ServerId) || string.IsNullOrWhiteSpace(interlock.StateUuid) ||
+             !settings.LoxoneServers.Any(server => server.Id.Equals(interlock.ServerId, StringComparison.OrdinalIgnoreCase))))
+            throw new ArgumentException("The irrigation-disable state must select a configured Miniserver and a state UUID.");
     }
 
     private static void EnsureUnique(IEnumerable<string> values, string label)

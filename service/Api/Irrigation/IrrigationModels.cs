@@ -42,9 +42,24 @@ public sealed class IrrigationConfiguration
     public List<IrrigationZoneConfiguration> Zones { get; set; } = [];
     public IrrigationLoxoneBlockConfiguration? LoxoneBlock { get; set; }
     public List<IrrigationWeatherStateMapping> WeatherStateMappings { get; set; } = [];
+    public IrrigationLoxoneStateMapping? IrrigationDisabledState { get; set; }
+    // Twelve monthly crop-water coefficients, indexed Jan..Dec. Missing groups use 1.0
+    // so existing installations retain their previous ET0 balance behavior.
+    public Dictionary<string, double[]> SeasonalCoefficientsByBalanceGroup { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public IrrigationLoxoneSignalTarget? IrrigationRequiredTarget { get; set; }
     public IrrigationLoxoneSignalTarget? LawnDryTarget { get; set; }
 }
+
+public sealed class IrrigationLoxoneStateMapping
+{
+    public string ServerId { get; set; } = string.Empty;
+    public string StateUuid { get; set; } = string.Empty;
+    public string Control { get; set; } = string.Empty;
+    public string State { get; set; } = string.Empty;
+}
+
+public sealed record IrrigationInterlockStatus(bool Configured, bool Disabled, bool StateKnown, bool ServerConnected,
+    string? RawValue, DateTimeOffset? LastReceivedAt, string Summary);
 
 public sealed class IrrigationLoxoneSignalTarget
 {
@@ -150,7 +165,9 @@ public sealed record IrrigationDashboardSnapshot(
     IrrigationStoredData Stored,
     IReadOnlyList<string> ActiveZoneIds,
     IrrigationResult Decision,
-    LawnDryStatus LawnDry);
+    LawnDryStatus LawnDry,
+    IrrigationInterlockStatus? Interlock = null,
+    IReadOnlyDictionary<string, double>? SeasonalFactorsForLastBalancedMonth = null);
 
 internal sealed class IrrigationState
 {

@@ -47,6 +47,8 @@ public sealed class LawnDryService
             .ToList();
 
         var wetnessMm = CalculateSurfaceWetnessMm(window, lawnRuns, cutoff, now, options);
+        var latestObservation = observations.LastOrDefault();
+        var dewRisk = latestObservation is not null && HasDewRisk(latestObservation);
         var rainingNowWindow = now.AddMinutes(-Math.Max(1, options.MowingRainingNowMinutes));
         var rainingNow = RainForPeriod(observations, rainingNowWindow, now) > 0.01;
 
@@ -62,7 +64,7 @@ public sealed class LawnDryService
 
         var threshold = Math.Max(0, options.LawnDryWetnessThresholdMm);
         var wetnessAllowed = wetnessMm <= threshold;
-        var allowed = weatherDataFresh && wetnessAllowed && !rainingNow && !irrigationRunning && !heavyRainLockout;
+        var allowed = weatherDataFresh && wetnessAllowed && !dewRisk && !rainingNow && !irrigationRunning && !heavyRainLockout;
         var latestText = latest?.ToString("yyyy-MM-dd HH:mm:ss 'UTC'") ?? "no saved sample";
         var checks = new[]
         {
@@ -72,6 +74,10 @@ public sealed class LawnDryService
                 historyReady ? "At least two ordered weather samples are available." : "At least two ordered, sufficiently recent weather samples are required."),
             new IrrigationDecisionCheck("Surface wetness", wetnessAllowed,
                 $"Estimated {Math.Round(wetnessMm, 2):F2} mm; allowed maximum {threshold:F2} mm."),
+            new IrrigationDecisionCheck("Dew risk", !dewRisk,
+                dewRisk
+                    ? $"Relative humidity is {latestObservation!.HumidityPct:F0}% with only {latestObservation.LightLux:F0} lux; grass may still be wet from dew."
+                    : "Current humidity and light do not indicate persistent dew."),
             new IrrigationDecisionCheck("Rain now", !rainingNow,
                 rainingNow ? $"Rain was detected in the last {Math.Max(1, options.MowingRainingNowMinutes)} min." : $"No rain detected in the last {Math.Max(1, options.MowingRainingNowMinutes)} min."),
             new IrrigationDecisionCheck("Lawn irrigation", !irrigationRunning,
@@ -155,6 +161,13 @@ public sealed class LawnDryService
         rateMmPerHour = Math.Clamp(rateMmPerHour * Math.Max(0, options.MowingDryingFactor), 0, 0.6);
         return rateMmPerHour * hours;
     }
+
+    // High relative humidity near dawn is a useful proxy for dew on grass blades, which the
+    // rain gauge and root-zone water balance cannot see. Keep this as an immediate safety gate
+    // rather than inventing a rainfall-equivalent amount; bright daylight clears the gate.
+    internal static bool HasDewRisk(WeatherObservation observation) =>
+        observation.TemperatureC > 0 &&
+        (observation.HumidityPct >= 98 || observation.HumidityPct >= 95 && observation.LightLux < 10_000);
 
     internal static double RainForPeriod(IReadOnlyList<WeatherObservation> orderedObservations, DateTimeOffset start, DateTimeOffset end)
     {

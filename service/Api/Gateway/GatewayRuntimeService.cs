@@ -11,7 +11,8 @@ public sealed class GatewayRuntimeService(
     DeviceIntegrations devices,
     GatewayMetrics metrics,
     loxone.smart.gateway.Api.Irrigation.IrrigationLoxoneService irrigationLoxone,
-    loxone.smart.gateway.Api.Irrigation.IrrigationWeatherStateService irrigationWeather) : BackgroundService
+    loxone.smart.gateway.Api.Irrigation.IrrigationWeatherStateService irrigationWeather,
+    loxone.smart.gateway.Api.Irrigation.IrrigationDisableStateService irrigationDisable) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -61,6 +62,9 @@ public sealed class GatewayRuntimeService(
                     .Select(mapping => NormalizeUuid(mapping.LoxoneStateUuid))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var irrigationBlock = store.GetSnapshot().Settings.Irrigation.LoxoneBlock;
+                var disableState = store.GetSnapshot().Settings.Irrigation.IrrigationDisabledState;
+                if (disableState is not null && disableState.ServerId.Equals(server.Id, StringComparison.OrdinalIgnoreCase))
+                    watchedStateUuids.Add(NormalizeUuid(disableState.StateUuid));
                 foreach (var mapping in store.GetSnapshot().Settings.Irrigation.WeatherStateMappings.Where(x => x.ServerId.Equals(server.Id, StringComparison.OrdinalIgnoreCase)))
                     watchedStateUuids.Add(NormalizeUuid(mapping.StateUuid));
                 if (irrigationBlock is not null && irrigationBlock.ServerId.Equals(server.Id, StringComparison.OrdinalIgnoreCase))
@@ -76,7 +80,11 @@ public sealed class GatewayRuntimeService(
                         if (!channel.Writer.TryWrite((uuid, value, receivedAt)))
                             Log.Warning("Could not queue Loxone state {uuid} from {server} in session {SessionAttempt}; the session processor is no longer accepting events", uuid, server.Name, sessionAttempt);
                     },
-                    status => store.ReportLoxoneStatus(server.Id, status), watchedStateUuids, cancellationToken, sessionAttempt);
+                    status =>
+                    {
+                        store.ReportLoxoneStatus(server.Id, status);
+                        irrigationDisable.ReportConnection(server.Id, status.StartsWith("Connected", StringComparison.OrdinalIgnoreCase));
+                    }, watchedStateUuids, cancellationToken, sessionAttempt);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
             catch (Exception ex)
@@ -86,6 +94,7 @@ public sealed class GatewayRuntimeService(
             }
             finally
             {
+                irrigationDisable.ReportConnection(server.Id, false);
                 processorCancellation.Cancel();
                 channel.Writer.TryComplete();
                 try { await processor; }
@@ -105,6 +114,9 @@ public sealed class GatewayRuntimeService(
             while (reader.TryRead(out var state))
             {
                 var normalizedUuid = NormalizeUuid(state.Uuid);
+                // The disable interlock must see every initial/reconnect snapshot, even when the
+                // mapping dispatcher suppresses unchanged values across sessions.
+                irrigationDisable.ObserveState(serverId, state.Uuid, state.Value);
                 if (lastValues.TryGetValue(normalizedUuid, out var previous) && previous.Equals(state.Value))
                 {
                     Log.Debug("Ignoring repeated Loxone state {uuid} with unchanged value {value}; reconnect snapshot will not be replayed", state.Uuid, state.Value);
